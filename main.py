@@ -1233,6 +1233,50 @@ if __name__ == "__main__":
     
     # A tarefa complexa e bem definida fornecida pelo usuário é um excelente caso de teste.
     tarefa = """
+    Let's create an html 2D web-based game. Try to make everything into a single script I can run on my browser. This game plays as a sidescroller platformer that happens on a single screen, so no need to programm a camera. You control a character that can walk around usind A and D, and can jump using spacebar. You can shoot projectiles by aiming with your mouse and clicking (if you hold the click, you shoot automatically, respecting the cooldown time between shots). The topology of the ground is like image 1, with blocks creating steps. Flying enemies keep spawning from the top of the scene, and they stop moving when they reach 70% the height of the screen, where they instead start following your character (with a smooth delay) and shooting towards him. If you character gets shot, he loses HP, but stays invincible for about half a second (to prevent multiple shots). Enemies keep spawning non stop, and they get stronger and more numerous as the game goes. Killing enemies give your character EXP, which levels him up eventually. Create an HP bar and an EXP bar for the character on the top left of the screen. Each levels becomes a little harder to get. When your character levels up, he's presented with 3 upgrade choices, which can be any one from this list:
+    Catalyst — Projectile Damage +2
+    Eyesight — Critical Chance +5%
+    Growth — Max. HP +10
+    Impulse — Jump Height +30%
+    Renew — Heal to Max. HP
+    Resist — Defense +4%
+    Resonance — Atk Speed +12%
+    Souls — Chance to drop soul orb 1%
+    Stability — Projectile takes +1 hit before exploding
+    Swift — Movement Speed +20%
+    Catalyst+ — Projectile Damage +4
+    Charge — Projectile Size +20%
+    Cloak – Invulnerability after taking damage +10% duration
+    Fragmentation – When killed, enemies release 2 weaker projectile in random directions
+    Friction – For every meter you run, 1 explosive projectile is launched upwards
+    Growth+ — Max. HP +20
+    Gush — Adds +1 Jump
+    Leech — Life Steal of 3% Damage
+    Luck — Bigger chance to roll uncommon items
+    Orb — Dead enemies have 5% chance to drop a healing orb
+    Precision — Critical deals +50% damage
+    Rage — If under 50% HP, raises your projectile and body damage accordingly (up to 50%)
+    Regrowth — Regenerates HP% based on the number of enemies alive
+    Resonance+ — Attack Speed +24%
+    Shrink — Makes you 10% smaller
+    Swift+ — Movement Speed +40%
+    Thunderbolt — Calls 2 thunderbolts from the skies every few seconds
+    Appraisal — +1 item choice from now on
+    Barrier — Creates a shield that blocks damage once every few seconds
+    Cold — Enemies get 1% slower every time they take damage (up to 80%)
+    Fragmentation+ – When killed, enemies release 6 weaker projectile in random directions
+    Friction+ – For every meter you run, 3 explosive projectile is launched upwards
+    Focus — Gains attack speed every second you don't move. Resets every wave
+    Growth++ — Max. HP +40
+    Immortal — +1 Revive (kill all enemies when reviving)
+    Leech+ — Life Steal of 9% Damage
+    Overheat — Your body deals 40 damage on contact
+    Thunderbolt+ — Calls 6 thunderbolts from the skies every few seconds
+    Tome — New common items (white) you pick up are 35% more effective
+    Will-O-Wisp — Summons a wisp that inherits half your attack damage and speed
+    Wound — Dealing damage applies bleeding to the enemy
+
+    Create a extraordinary game with extraordinary machanics, you MUST BE creative, add mechanics from famous games similiars... note: this game is Seraphs Last Stands, but I want a perfect game.
 """
 
     resultado_final = task_manager.delegate_task(tarefa)
