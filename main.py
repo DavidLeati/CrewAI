@@ -10,6 +10,7 @@ from app_logger import logger
 from config import config, setup_logging
 from services import GeminiService
 from tasks import TaskManager
+from search_util import LLMSearchSystem
 
 # --- Armazenamento de logs e estado da aplicação ---
 app_logs = []
@@ -25,6 +26,8 @@ def ui_callback(message: str):
 
 # --- Configuração da Aplicação Flask ---
 app = Flask(__name__)
+log = logging.getLogger('werkzeug')
+log.setLevel(logging.ERROR)
 
 # --- TEMPLATE HTML ---
 HTML_TEMPLATE = """
@@ -195,10 +198,15 @@ def main():
         logging.critical(f"Erro ao configurar a API Gemini: {e}")
         return
 
+    search_system = LLMSearchSystem()
+    search_system.start_background_scraper() # Inicia o rastreador em segundo plano
+
     gemini_service = GeminiService(
         model_name=config.MODEL_NAME, 
-        fallback_model_name=config.FALLBACK_MODEL_NAME
+        fallback_model_name=config.FALLBACK_MODEL_NAME,
+        search_system=search_system
     )
+
     # Anexa o task_manager à instância do app Flask para que possa ser acessado na rota /start
     app.task_manager = TaskManager(
         llm_service=gemini_service, 
