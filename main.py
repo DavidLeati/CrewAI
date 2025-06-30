@@ -26,7 +26,7 @@ def ui_callback(message: str):
 # --- Configuração da Aplicação Flask ---
 app = Flask(__name__)
 
-# --- TEMPLATE HTML ATUALIZADO ---
+# --- TEMPLATE HTML ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt-BR">

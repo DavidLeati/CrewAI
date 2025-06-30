@@ -68,8 +68,8 @@ class Agent:
                             content = f.read()
                             context_summary += f"```\n[CONTEÚDO COMPLETO DO ARQUIVO CRÍTICO]\n{content}\n```\n"
                         else:
-                            content = f.read(2000)
-                            context_summary += f"```\n{content}{'... (trecho)' if len(content) == 2000 else ''}\n```\n"
+                            content = f.read()
+                            context_summary += f"```\n{content}\n"
                 except Exception as e:
                     context_summary += f"[Não foi possível ler o arquivo: {e}]\n"
 
@@ -129,12 +129,13 @@ class Agent:
         # Repete a instrução mais crítica no final para garantir que seja seguida.
         prompt_footer = (
             "<exemplo_de_formato_de_saida>\n"
+            "O caminho do arquivo deve estar presente no suggested_filename.\n"
             "Lembre-se, sua resposta final deve ser o conteúdo do artefato, seguido imediatamente pelo bloco de metadados. Exemplo para um artefato:\n"
             "```python\n"
             "print('Hello, World!')\n"
             "```\n"
             "```json\n"
-            '{\n  "suggested_filename": "hello.py",\n  "description": "Um script de exemplo em Python."\n}\n'
+            '{\n  "suggested_filename": "script/hello.py",\n  "description": "Um script de exemplo em Python."\n}\n'
             "```\n"
             "</exemplo_de_formato_de_saida>"
         )
