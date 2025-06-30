@@ -4,14 +4,15 @@ import re
 import json
 import uuid
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Callable
 
 from fpdf import FPDF
 
 from config import config
 from services import GeminiService
-from utils import parse_llm_content_and_metadata, clean_markdown_code_fences, sanitize_filename
-
+from utils import parse_llm_output, clean_markdown_code_fences, sanitize_filename
+from shared_context import SharedContext
+from app_logger import logger
 
 class Agent:
     """
@@ -32,11 +33,8 @@ class Agent:
             'import ', 'from ', 'def ', 'class ', 'function ', 'const ', 'let ', 'var ',
             'public class', 'public static', 'void main', '#include', '=>', '={', '};'
         ]
-        # Uma verificação simples: se alguma dessas palavras-chave estiver no início
-        # das primeiras linhas, é provável que seja código.
-        for line in content.splitlines()[:5]: # Verifica as 5 primeiras linhas
-            if any(keyword in line for keyword in code_keywords):
-                return 'code'
+        for line in content.splitlines()[:5]:
+            if any(keyword in line for keyword in code_keywords): return 'code'
         return 'document'
 
     def execute_task(self,
@@ -45,7 +43,8 @@ class Agent:
                      task_workspace_dir: str,
                      iteration_num: int,
                      context_artifacts: List[Dict[str, Any]],
-                     feedback_history: List[str]
+                     feedback_history: List[str],
+                     shared_context: SharedContext 
                      ) -> List[Dict[str, Any]]:
         
         is_correction_attempt = bool(feedback_history)
@@ -76,6 +75,9 @@ class Agent:
 
         if is_correction_attempt:
             context_summary += f"\n--- HISTÓRICO DE FEEDBACK (MAIS RECENTE É MAIS IMPORTANTE) ---\n" + "\n---\n".join(reversed(feedback_history))
+    
+        communication_history = shared_context.get_full_context_for_prompt(self.role)
+        context_summary += f"\n--- HISTÓRICO DE COMUNICAÇÃO DA EQUIPE ---\n{communication_history}\n"
 
         # --- Geração do Prompt ---
         prompt_header = (
@@ -89,6 +91,7 @@ class Agent:
             "  - NUNCA inclua texto introdutório, conversacional ou explicativo como 'Claro, aqui está o código:'. Vá direto ao ponto.\n"
             "  - Sua resposta DEVE OBRIGATORIAMENTE terminar com um ou mais blocos de metadados ```json, cada um seguindo seu respectivo bloco de conteúdo.\n"
             "  - NÃO gere scripts de shell (bash, sh, cmd). Gere o conteúdo interno dos arquivos.\n"
+            "  - Para se comunicar com outros agentes, use um bloco ```message. O conteúdo DEVE ser um JSON com as chaves 'recipient' (o 'role' do destinatário) e 'content' (sua mensagem).\n"
             "</regras_inviolaveis_de_saida>\n\n"
         )
 
@@ -140,7 +143,7 @@ class Agent:
         prompt = prompt_header + prompt_context + prompt_task + prompt_footer
 
         # --- 2. Geração com Loop de Continuação (Inalterado) ---
-        logging.info(f"Agente '{self.role}' iniciando tarefa: {task_description[:100]}...")
+        logger.add_log_for_ui(f"Agente '{self.role}' iniciando tarefa: {task_description[:100]}...")
         content_parts = []
         current_prompt = prompt
         max_continuations = 5 
@@ -152,7 +155,7 @@ class Agent:
                 return []
             content_parts.append(generation_result['text'])
             if generation_result['finish_reason'] != 'MAX_TOKENS':
-                if is_continuation: logging.info("Geração de continuação concluída.")
+                if is_continuation: logger.add_log_for_ui("Geração de continuação concluída.")
                 break
             is_continuation = True
             logging.warning(f"Resposta truncada (MAX_TOKENS). Preparando continuação ({i+1}/{max_continuations})...")
@@ -163,58 +166,55 @@ class Agent:
         full_llm_response = "".join(content_parts)
          
         # --- 3. Processamento e Salvamento dos Artefatos ---
-        parsed_artifacts = parse_llm_content_and_metadata(full_llm_response)
+        parsed_artifacts = parse_llm_output(full_llm_response)
         saved_artifacts_metadata = []
 
-        # --- Rede de Segurança Para Repostas de Json Bruto
-        if len(parsed_artifacts) == 1 and not parsed_artifacts[0][1]: # Se temos um único artefato sem metadados
-            content, _ = parsed_artifacts[0]
-            try:
-                # Tenta analisar o conteúdo como se fosse um JSON.
-                possible_metadata = json.loads(content)
-                if isinstance(possible_metadata, dict):
-                    # Se for um JSON válido, o tratamos como o metadado, com conteúdo vazio.
-                    logging.info("Resposta de JSON bruto detectada. Reprocessando como metadados.")
-                    parsed_artifacts = [("", possible_metadata)]
-            except json.JSONDecodeError:
-                # Não era um JSON, segue o fluxo normal.
-                pass
+        # Iteramos sobre cada item (dicionário) que o parser encontrou.
+        for output in parsed_artifacts:
+            output_type = output.get("type")
 
-        for content, metadata in parsed_artifacts:
-            # --- Lógica de Fallback com Autocorreção ---
-            if not metadata or 'suggested_filename' not in metadata:
-                logging.warning(f"Artefato sem metadados válidos. Iniciando fallback. Conteúdo: '{content[:100]}...'")
-                match = re.search(r"['\"]([a-zA-Z0-9_\/\\]+\.[a-zA-Z0-9_]+)['\"]", task_description)
-                if match:
-                    suggested_filename = match.group(1)
-                    description = f"Metadados inferidos para {suggested_filename}"
-                else: 
-                    logging.warning("Não foi possível inferir o nome do arquivo. Tentando autocorreção para gerar metadados.")
+            # --- Ramo 1: O agente enviou uma mensagem ---
+            if output_type == "message":
+                recipient = output.get("recipient", "all")
+                content = output.get("content", "")
+                if shared_context: # Garante que o contexto exista
+                    shared_context.add_message(sender=self.role, content=content, recipient=recipient)
+                    logger.add_log_for_ui(f"Agente '{self.role}' enviou uma mensagem para '{recipient}'.")
+                continue # Pula para o próximo item da lista
+
+            # --- Ramo 2: O agente produziu um artefato (código/documento) ---
+            elif output_type == "artifact":
+                content = output.get("content", "")
+                metadata = output.get("metadata", {})
+
+                # --- Lógica de Fallback com Autocorreção (adaptada para a nova estrutura) ---
+                if not metadata or 'suggested_filename' not in metadata:
+                    logger.add_log_for_ui(f"Artefato sem metadados válidos. Iniciando fallback. Conteúdo: '{content[:100]}...'", "warning")
+                    # Sua lógica de fallback existente vai aqui, como o prompt para gerar metadados.
                     naming_prompt = (
                         "Analise o seguinte conteúdo e sugira um nome de arquivo apropriado (com extensão) e uma breve descrição. "
                         "Sua resposta DEVE ser um único objeto JSON com as chaves 'suggested_filename' e 'description'.\n\n"
                         f"CONTEÚDO PARA ANÁLISE:\n---\n{content[:1500]}...\n---\n"
                         "Responda apenas com o JSON."
                     )
-                    
                     metadata_response_dict = self.llm_service.generate_text(naming_prompt, temperature=0.1, is_json_output=True)
-                    metadata_response_text = metadata_response_dict.get('text', '{}')
-                    
                     try:
-                        naming_metadata = json.loads(metadata_response_text)
-                        if 'suggested_filename' not in naming_metadata:
+                        # Usa o dicionário retornado diretamente
+                        metadata = json.loads(metadata_response_dict.get('text', '{}'))
+                        if 'suggested_filename' not in metadata:
                             raise ValueError("Chave 'suggested_filename' ausente no JSON de autocorreção.")
-                        suggested_filename = naming_metadata["suggested_filename"]
-                        description = naming_metadata.get("description", "Descrição autogerada.")
                     except (json.JSONDecodeError, ValueError) as e:
-                        logging.error(f"Autocorreção de metadados falhou: {e}. Usando fallback genérico.")
-                        suggested_filename = f"{self.role.replace(' ', '_').lower()}_fallback_{uuid.uuid4().hex[:6]}.txt"
-                        description = f"Fallback genérico para a tarefa: {task_description[:50]}..."
-            else:
-                suggested_filename = metadata["suggested_filename"]
+                        logger.add_log_for_ui(f"Autocorreção de metadados falhou: {e}. Usando fallback genérico.", "error")
+                        metadata = {
+                            "suggested_filename": f"{self.role.replace(' ', '_').lower()}_fallback_{uuid.uuid4().hex[:6]}.txt",
+                            "description": f"Fallback genérico para a tarefa: {task_description[:50]}..."
+                        }
+
+                # Extrai as informações dos metadados
+                suggested_filename = metadata.get("suggested_filename")
                 description = metadata.get("description", "Descrição não fornecida.")
 
-            content_to_save = clean_markdown_code_fences(content)
+                content_to_save = clean_markdown_code_fences(content)
             
             # --- Lógica de Reconciliação e Salvamento (Inalterada) ---
             target_path_from_task = None
@@ -225,7 +225,7 @@ class Agent:
             final_path_to_use = os.path.normpath(suggested_filename)
             if target_path_from_task and os.path.basename(target_path_from_task) == os.path.basename(final_path_to_use):
                 final_path_to_use = target_path_from_task
-                logging.info(f"Caminho do arquivo reconciliado para: '{final_path_to_use}'.")
+                logger.add_log_for_ui(f"Caminho do arquivo reconciliado para: '{final_path_to_use}'.")
             
             path_parts = final_path_to_use.split(os.sep)
             filename_part = sanitize_filename(path_parts[-1])
@@ -264,7 +264,7 @@ class Agent:
                     with open(output_filepath, "w", encoding="utf-8") as f:
                         f.write(content_to_save)
                 
-                logging.info(f"Agente '{self.role}' salvou/sobrescreveu o artefato: '{output_filepath}'")
+                logger.add_log_for_ui(f"Agente '{self.role}' salvou/sobrescreveu o artefato: '{output_filepath}'")
                 saved_artifacts_metadata.append({
                     "file_path": output_filepath, "description": description, "agent_role": self.role,
                     "task_description": task_description, "iteration_num": iteration_num,
@@ -280,56 +280,29 @@ class Crew:
         self.name = name
         self.description = description
         self.agents = {agent.role: agent for agent in agents}
-        logging.info(f"Crew '{self.name}' criada com {len(agents)} agentes: {list(self.agents.keys())}")
+        self.shared_context = SharedContext()
 
-    def process_subtasks(self,
-                           main_task_description: str,
-                           subtasks: List[Dict[str, Any]],
-                           task_workspace_dir: str,
-                           iteration_num: int,
-                           feedback_history: List[str]
-                           ) -> Dict[str, Any]:
-        
-        logging.info(f"Crew '{self.name}' (Tentativa {iteration_num}) iniciando processamento de {len(subtasks)} subtarefas.")
+        logger.add_log_for_ui(f"Crew '{self.name}' criada com {len(agents)} agentes: {list(self.agents.keys())}")
+
+    def process_subtasks(self, main_task_description: str, subtasks: List[Dict[str, Any]], task_workspace_dir: str, iteration_num: int, feedback_history: List[str], status_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        logger.add_log_for_ui(f"Crew '{self.name}' (Tentativa {iteration_num}) iniciando processamento de {len(subtasks)} subtarefas.")
         iteration_artifacts_metadata: List[Dict[str, Any]] = []
-
         for i, subtask in enumerate(subtasks):
-            subtask_desc = subtask.get("description", "Descrição da subtarefa não fornecida.")
+            subtask_desc = subtask.get("description", "N/A")
             responsible_role = subtask.get("responsible_role")
-            logging.info(f"--- Subtarefa {i+1}/{len(subtasks)}: '{subtask_desc[:80]}...' (Responsável: {responsible_role}) ---")
-
-            if not responsible_role or responsible_role not in self.agents:
-                logging.error(f"Papel responsável '{responsible_role}' não encontrado na crew. Pulando subtarefa.")
-                continue
-
-            agent = self.agents[responsible_role]
+            if status_callback: status_callback(f"Etapa {i+1}/{len(subtasks)}: Agente '{responsible_role}' iniciando: {subtask_desc[:40]}...")
             
-            # <<< MUDANÇA 3: Passando `main_task_description` para a execução do agente >>>
-            artifacts_metadata_list = agent.execute_task(
-                main_task_description=main_task_description,
-                task_description=subtask_desc,
-                task_workspace_dir=task_workspace_dir,
-                iteration_num=iteration_num,
-                context_artifacts=list(iteration_artifacts_metadata),
-                feedback_history=feedback_history
-            )
-
+            agent = self.agents.get(responsible_role)
+            if not agent:
+                logger.add_log_for_ui(f"ERRO: Papel '{responsible_role}' não encontrado na crew. Pulando.", "error"); continue
+            
+            artifacts_metadata_list = agent.execute_task(main_task_description, subtask_desc, task_workspace_dir, iteration_num, list(iteration_artifacts_metadata), feedback_history, self.shared_context)
+            
             if artifacts_metadata_list:
                 iteration_artifacts_metadata.extend(artifacts_metadata_list)
             else:
-                error_msg = f"Agente '{agent.role}' não produziu nenhum artefato para a tarefa '{subtask_desc[:30]}...'. Interrompendo."
-                logging.error(error_msg)
-                return {
-                    "task_workspace_dir": task_workspace_dir,
-                    "artifacts_metadata": iteration_artifacts_metadata,
-                    "status": "ERRO",
-                    "message": error_msg,
-                }
+                error_msg = f"Agente '{agent.role}' não produziu nenhum artefato para a tarefa."
+                logger.add_log_for_ui(f"ERRO: {error_msg}", "error")
+                return {"status": "ERRO", "message": error_msg, "artifacts_metadata": iteration_artifacts_metadata}
         
-        logging.info(f"Crew '{self.name}' (Tentativa {iteration_num}) concluiu todas as subtarefas com sucesso.")
-        return {
-            "task_workspace_dir": task_workspace_dir,
-            "artifacts_metadata": iteration_artifacts_metadata,
-            "status": "SUCESSO",
-            "message": f"Tentativa {iteration_num} concluída pela crew. {len(iteration_artifacts_metadata)} artefatos gerados/atualizados.",
-        }
+        return {"status": "SUCESSO", "message": "Subtarefas da tentativa concluídas.", "artifacts_metadata": iteration_artifacts_metadata}

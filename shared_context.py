@@ -1,6 +1,7 @@
 # shared_context.py
 import logging
 from typing import List, Dict, Any
+from app_logger import logger
 
 class SharedContext:
     """
@@ -9,7 +10,7 @@ class SharedContext:
     """
     def __init__(self):
         self._messages: List[Dict[str, Any]] = []
-        logging.info("Contexto Compartilhado (SharedContext) inicializado.")
+        logger.add_log_for_ui("Contexto Compartilhado (SharedContext) inicializado.")
 
     def add_message(self, sender: str, content: str, recipient: str = "all"):
         """
@@ -26,7 +27,7 @@ class SharedContext:
             "content": content
         }
         self._messages.append(message)
-        logging.info(f"Mensagem adicionada ao contexto por '{sender}' para '{recipient}': '{content[:80]}...'")
+        logger.add_log_for_ui(f"Mensagem adicionada ao contexto por '{sender}' para '{recipient}': '{content[:80]}...'")
 
     def get_messages_for_agent(self, agent_role: str) -> List[Dict[str, Any]]:
         """

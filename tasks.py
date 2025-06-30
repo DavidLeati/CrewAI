@@ -11,6 +11,8 @@ import re
 from config import config
 from services import GeminiService
 from agents import Agent, Crew
+from memory import LongTermMemory
+from app_logger import logger
 
 class TaskManager:
     """Orquestra o planejamento, execução de tarefas por crews e o ciclo de validação/iteração."""
@@ -18,6 +20,7 @@ class TaskManager:
         self.llm_service = llm_service
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
+        self.memory = LongTermMemory()
 
     def _get_file_base_and_version(self, filename: str) -> tuple[str, tuple[int, ...]]:
         """
@@ -52,8 +55,14 @@ class TaskManager:
         """
         Usa o LLM para criar o plano de execução INICIAL e COMPLETO para a tarefa.
         """
-        logging.info("Planejando a estratégia de execução INICIAL...")
+        learnings = self.memory.retrieve_learnings(main_task_description)
+        learnings_str = "Nenhum aprendizado passado relevante."
+        if learnings:
+            learnings_str = "Aprendizados de tarefas similares passadas para sua consideração:\n" + "\n".join(learnings)
+
+        logger.add_log_for_ui("Planejando a estratégia de execução INICIAL...")
         prompt = (
+            f"{learnings_str}\n\n"
             "Você é uma IA de Gerenciamento de Projetos. Analise a tarefa principal e projete uma equipe e um plano de execução. "
             "Responda ESTRITAMENTE no formato JSON.\n\n"
             f"Tarefa Principal: \"{main_task_description}\"\n\n"
@@ -64,6 +73,9 @@ class TaskManager:
             "IMPORTANTE: Nas descrições das subtarefas que envolvem criar arquivos, mencione o nome do arquivo explicitamente entre aspas, "
             "por exemplo: \"Criar o arquivo de entrada principal 'main.ts'\" ou \"Desenvolver o controller do jogador em 'PlayerController.ts'\"."
             "A última subtarefa DEVE ser sobre revisar tudo e gerar um resumo final.\n\n"
+            "Seja especifico nas tarefas, por exemplo:\n"
+            "Em vez de: 'Criar o Game Design Document (GDD).\n"
+            "Tente: 'Sua única tarefa é gerar o conteúdo completo para o arquivo 'GameDesignDocument.md'. O documento deve detalhar o conceito, gênero, e tema do jogo. Comece o conteúdo imediatamente, sem introduções.'\n"
             "Exemplo de Formato:\n"
             "{\n"
             '  "crew_name": "GameDevCrew",\n'
@@ -90,7 +102,7 @@ class TaskManager:
         try:
             plan = json.loads(response_text)
             if all(k in plan for k in ["crew_name", "agents", "subtasks"]):
-                logging.info(f"Plano Inicial recebido. Crew: {plan['crew_name']}. Nº de subtarefas: {len(plan['subtasks'])}.")
+                logger.add_log_for_ui(f"Plano Inicial recebido. Crew: {plan['crew_name']}. Nº de subtarefas: {len(plan['subtasks'])}.")
                 return plan
             else:
                 logging.error(f"Plano JSON inicial recebido está incompleto. Resposta: {response_text}")
@@ -103,7 +115,7 @@ class TaskManager:
         """
         Analisa um traceback e cria uma única subtarefa focada para corrigir o(s) arquivo(s) com erro.
         """
-        logging.info("Criando uma tarefa de depuração focada...")
+        logger.add_log_for_ui("Criando uma tarefa de depuração focada...")
         
         # Encontra todos os arquivos mencionados no traceback
         filepath_matches = re.findall(r'File "([^"]+)"', traceback)
@@ -146,7 +158,7 @@ class TaskManager:
 
     def _generate_corrective_subtasks(self, main_task_description: str, original_plan: Dict, feedback: str) -> Optional[List[Dict]]:
         """Usa o LLM para gerar APENAS a lista de subtarefas necessárias para corrigir um erro."""
-        logging.info("Gerando uma lista de subtarefas corretivas focada no erro...")
+        logger.add_log_for_ui("Gerando uma lista de subtarefas corretivas focada no erro...")
         original_subtasks_str = json.dumps(original_plan.get('subtasks', []), indent=2)
         agent_roles = [ag['role'] for ag in original_plan.get('agents', [])]
 
@@ -183,7 +195,7 @@ class TaskManager:
         try:
             subtasks = json.loads(response_text)
             if isinstance(subtasks, list):
-                logging.info(f"Plano de Ação Corretivo com {len(subtasks)} subtarefas gerado com sucesso.")
+                logger.add_log_for_ui(f"Plano de Ação Corretivo com {len(subtasks)} subtarefas gerado com sucesso.")
                 return subtasks
             else:
                 logging.error(f"Resposta para plano corretivo não foi uma lista JSON. Resposta: {response_text}")
@@ -197,7 +209,7 @@ class TaskManager:
         Verifica programaticamente a estrutura de arquivos conhecidos, como JSON.
         Garante que não há texto extra ou má formatação.
         """
-        logging.info("--- Iniciando Validador de Estrutura de Arquivo ---")
+        logger.add_log_for_ui("--- Iniciando Validador de Estrutura de Arquivo ---")
         for artifact in artifacts:
             file_path = artifact.get('file_path', '')
             
@@ -216,12 +228,12 @@ class TaskManager:
             
             # (Futuramente, outras validações estruturais, como linter de python, podem ser adicionadas aqui)
 
-        logging.info("✅ Validação de Estrutura de Arquivo bem-sucedida.")
+        logger.add_log_for_ui("✅ Validação de Estrutura de Arquivo bem-sucedida.")
         return {"success": True, "feedback": "A estrutura de todos os arquivos validados está correta."}
 
     def _reconcile_plan_with_artifacts(self, subtasks: List[Dict[str, Any]], workspace_dir: str) -> Dict[str, Any]:
         """Compara os arquivos planejados com os arquivos realmente gerados, respeitando os subdiretórios."""
-        logging.info("--- Iniciando Auditoria de Plano vs. Realidade ---")
+        logger.add_log_for_ui("--- Iniciando Auditoria de Plano vs. Realidade ---")
         
         planned_files = set()
         filename_regex = r"['\"]([\w\.\/\\]+\.(?:ts|js|py|svelte|json|md|txt))['\"]"
@@ -247,14 +259,14 @@ class TaskManager:
         missing_files = planned_files - generated_relative_paths
 
         if not missing_files:
-            logging.info("✅ Auditoria bem-sucedida! Todos os arquivos planejados foram gerados."); return {"success": True}
+            logger.add_log_for_ui("✅ Auditoria bem-sucedida! Todos os arquivos planejados foram gerados."); return {"success": True}
         else:
             feedback = (f"FALHA DE AUDITORIA: O plano exigia a criação dos seguintes arquivos, mas eles não foram encontrados: {list(missing_files)}. A próxima iteração DEVE focar em gerar o CÓDIGO-FONTE para esses arquivos.")
             logging.error(feedback); return {"success": False, "feedback": feedback}
         
     def _execute_run_test(self, workspace_dir: str, artifacts: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Tenta executar o código gerado com base nas instruções do README."""
-        logging.info("--- Iniciando Prova Prática (Teste de Execução) ---")
+        logger.add_log_for_ui("--- Iniciando Prova Prática (Teste de Execução) ---")
         
         # <<< CORREÇÃO: Recebe a lista de artefatos e a utiliza corretamente >>>
         readme_artifact = next((art for art in artifacts if 'readme.md' in os.path.basename(art['file_path']).lower()), None)
@@ -279,16 +291,16 @@ class TaskManager:
             logging.warning("Comando de execução não encontrado no README.md. Pulando teste."); return {"success": True}
         
         command = "python -m " + match.group(1).strip()
-        logging.info(f"Comando encontrado no README: '{command}'")
+        logger.add_log_for_ui(f"Comando encontrado no README: '{command}'")
 
         try:
             proc = subprocess.run(command.split(), cwd=workspace_dir, capture_output=True, text=True, timeout=30, check=False)
             if proc.returncode == 0:
-                logging.info("Teste de execução concluído com sucesso."); return {"success": True, "output": proc.stdout}
+                logger.add_log_for_ui("Teste de execução concluído com sucesso."); return {"success": True, "output": proc.stdout}
             else:
                 logging.error(f"Teste de execução FALHOU. Erro:\n{proc.stderr}"); return {"success": False, "output": f"O comando '{command}' falhou com o erro:\n\n{proc.stderr}"}
         except subprocess.TimeoutExpired:
-            logging.info("Teste atingiu o timeout. Considerado sucesso para aplicações com loop."); return {"success": True}
+            logger.add_log_for_ui("Teste atingiu o timeout. Considerado sucesso para aplicações com loop."); return {"success": True}
         except Exception as e:
             return {"success": False, "output": f"Exceção ao rodar comando: {e}"}
             
@@ -297,7 +309,7 @@ class TaskManager:
         Usa um agente de IA para revisar o conteúdo da VERSÃO MAIS RECENTE de cada arquivo de código,
         prevenindo a revisão de versões antigas e obsoletas.
         """
-        logging.info("--- Iniciando Auditoria de Completude de Código com Agente Revisor ---")
+        logger.add_log_for_ui("--- Iniciando Auditoria de Completude de Código com Agente Revisor ---")
         
         source_code_artifacts = [
             art for art in artifacts 
@@ -305,7 +317,7 @@ class TaskManager:
         ]
 
         if not source_code_artifacts:
-            logging.info("Nenhum arquivo de código fonte encontrado para revisar.")
+            logger.add_log_for_ui("Nenhum arquivo de código fonte encontrado para revisar.")
             return {"is_complete": True, "feedback": "Nenhum código para revisar."}
         
         latest_artifacts = {}
@@ -318,8 +330,8 @@ class TaskManager:
         
         artifacts_to_review = [item['artifact'] for item in latest_artifacts.values()]
         
-        logging.info(f"Total de artefatos de código encontrados: {len(source_code_artifacts)}")
-        logging.info(f"Revisando {len(artifacts_to_review)} arquivos (apenas versões mais recentes): {[os.path.basename(art['file_path']) for art in artifacts_to_review]}")
+        logger.add_log_for_ui(f"Total de artefatos de código encontrados: {len(source_code_artifacts)}")
+        logger.add_log_for_ui(f"Revisando {len(artifacts_to_review)} arquivos (apenas versões mais recentes): {[os.path.basename(art['file_path']) for art in artifacts_to_review]}")
 
         task_map = {}
         for task in subtasks:
@@ -379,7 +391,7 @@ class TaskManager:
             consolidated_feedback = "FALHA DE AUDITORIA DE CÓDIGO:\n" + "\n".join(incomplete_files_feedback)
             return {"is_complete": False, "feedback": consolidated_feedback}
         else:
-            logging.info("✅ Auditoria de Completude de Código bem-sucedida. Nenhum placeholder encontrado.")
+            logger.add_log_for_ui("✅ Auditoria de Completude de Código bem-sucedida. Nenhum placeholder encontrado.")
             return {"is_complete": True, "feedback": "Todos os arquivos de código revisados parecem completos."}
 
     def _perform_backtest_and_validate(self,
@@ -394,7 +406,7 @@ class TaskManager:
         if not artifacts:
             return {"is_satisfactory": False, "feedback": "Nenhum artefato produzido para validação."}
 
-        logging.info(f"Iniciando validação TEÓRICA (QA) da Tentativa {iteration_num} com contexto real...")
+        logger.add_log_for_ui(f"Iniciando validação TEÓRICA (QA) da Tentativa {iteration_num} com contexto real...")
         
         # <<< MUDANÇA: Construir um resumo com o conteúdo real dos arquivos >>>
         artifacts_content_summary = ""
@@ -442,7 +454,7 @@ class TaskManager:
         
     def _get_final_deliverables_list(self, main_task_description: str, all_files: List[str]) -> List[str]:
         """Usa o LLM para selecionar os arquivos finais essenciais de uma lista."""
-        logging.info("Iniciando etapa de curadoria final para selecionar os entregáveis...")
+        logger.add_log_for_ui("Iniciando etapa de curadoria final para selecionar os entregáveis...")
         
         file_list_str = "\n".join([f"- {f}" for f in all_files])
 
@@ -471,7 +483,7 @@ class TaskManager:
             curation_data = json.loads(response_str)
             if isinstance(curation_data, dict) and "deliverables" in curation_data and isinstance(curation_data["deliverables"], list):
                 deliverables = curation_data["deliverables"]
-                logging.info(f"Curadoria da IA selecionou {len(deliverables)} entregáveis: {deliverables}")
+                logger.add_log_for_ui(f"Curadoria da IA selecionou {len(deliverables)} entregáveis: {deliverables}")
                 # Validação final para garantir que os arquivos selecionados pela IA realmente existem
                 existing_deliverables = [f for f in deliverables if f in all_files]
                 return existing_deliverables
@@ -501,7 +513,7 @@ class TaskManager:
                 logging.warning("Nenhum arquivo encontrado no workspace para finalizar.")
                 return None
 
-            logging.info("Filtrando arquivos para obter apenas as versões mais recentes antes da curadoria final.")
+            logger.add_log_for_ui("Filtrando arquivos para obter apenas as versões mais recentes antes da curadoria final.")
             latest_files = {}
             for filename in all_files_in_workspace:
                 base_name, version_tuple = self._get_file_base_and_version(filename)
@@ -510,7 +522,7 @@ class TaskManager:
                     latest_files[base_name] = {'version': version_tuple, 'filename': filename}
             
             latest_filenames_to_curate = [item['filename'] for item in latest_files.values()]
-            logging.info(f"As seguintes versões de arquivos serão apresentadas para curadoria: {latest_filenames_to_curate}")
+            logger.add_log_for_ui(f"As seguintes versões de arquivos serão apresentadas para curadoria: {latest_filenames_to_curate}")
 
             # Obter a lista curada de entregáveis a partir das versões mais recentes.
             deliverables_to_copy = self._get_final_deliverables_list(main_task_description, latest_filenames_to_curate)
@@ -525,14 +537,14 @@ class TaskManager:
                 destination_path = os.path.join(final_output_dir, filename)
                 shutil.copy2(source_path, destination_path)
             
-            logging.info(f"Artefatos finais curados e copiados com sucesso para: '{final_output_dir}'")
+            logger.add_log_for_ui(f"Artefatos finais curados e copiados com sucesso para: '{final_output_dir}'")
             return final_output_dir
             
         except Exception as e:
             logging.error(f"Erro crítico ao finalizar e consolidar os artefatos: {e}")
             return None
 
-    def _create_summary_log(self, task_id: str, main_task_description: str, results: List[Dict], final_status: str, final_output_dir: Optional[str]):
+    def _create_summary_add_log_for_ui(self, task_id: str, main_task_description: str, results: List[Dict], final_status: str, final_output_dir: Optional[str]):
         """Cria um log de resumo detalhado para toda a execução da tarefa."""
         summary_path = os.path.join(self.output_dir, f"task_{task_id}_summary_log.md")
         
@@ -579,88 +591,199 @@ class TaskManager:
         try:
             with open(summary_path, "w", encoding="utf-8") as f:
                 f.write(summary_content)
-            logging.info(f"Log de resumo da tarefa salvo em: '{summary_path}'")
+            logger.add_log_for_ui(f"Log de resumo da tarefa salvo em: '{summary_path}'")
             return summary_path
         except Exception as e:
             logging.error(f"Não foi possível salvar o log de resumo final: {e}")
             return None
 
-    def delegate_task(self, main_task_description: str) -> str:
-        """Orquestra o ciclo completo, garantindo que o loop de correção continue após uma falha."""
+    def _re_strategize_plan(self, main_task_description: str, failure_history: List[str]) -> Optional[Dict[str, Any]]:
+        """
+        Usa o LLM para criar um plano de execução COMPLETAMENTE NOVO com base nos erros passados.
+        Esta função é um mecanismo de recuperação crítico quando as correções incrementais falham.
+        """
+        logging.critical("FALHAS REPETIDAS DETECTADAS. ACIONANDO REPLANEJAMENTO ESTRATÉGICO COMPLETO.")
+        
+        # Formata o histórico de falhas para ser incluído no prompt.
+        history_str = "\n- ".join(failure_history)
+
+        # O prompt instrui a IA a agir como um estrategista sênior,
+        # analisando os erros passados para criar um plano melhor, em vez de apenas consertar o antigo.
+        prompt = (
+            "Você é uma IA de Gerenciamento de Projetos Sênior, especialista em recuperação de projetos. "
+            "Uma tentativa anterior de executar um plano falhou repetidamente. Sua tarefa é criar um plano ESTRATÉGICO COMPLETAMENTE NOVO "
+            "para alcançar o objetivo, aprendendo com os erros do passado. Não tente consertar o plano antigo, crie um novo.\n\n"
+            f"Tarefa Principal: \"{main_task_description}\"\n\n"
+            f"Histórico de Feedbacks de Erro que Causaram o Replanejamento:\n- {history_str}\n\n"
+            "Analise os erros e proponha uma nova abordagem. Talvez os agentes definidos estivessem errados, ou as subtarefas fossem mal "
+            "concebidas. Considere uma estrutura de equipe diferente ou uma sequência de tarefas totalmente nova para evitar os mesmos problemas.\n\n"
+            "Responda ESTRITAMENTE no mesmo formato JSON do planejamento inicial: o JSON deve conter as chaves: 'crew_name', "
+            "'crew_description', 'agents' (uma lista de objetos com 'role', 'goal', 'backstory'), e 'subtasks' "
+            "(uma lista de objetos com 'description' e 'responsible_role')."
+        )
+        
+        # Chama o serviço de LLM esperando uma saída JSON.
+        response_dict = self.llm_service.generate_text(prompt, temperature=config.TEMPERATURE_PLANNING, is_json_output=True)
+        response_text = response_dict.get('text', '')
+
+        # Validação rigorosa da resposta da API.
+        if not response_text or response_dict.get('finish_reason') != 'STOP':
+            logging.error(f"A chamada de REPLANEJAMENTO à API falhou ou foi bloqueada. Resposta: {response_text}")
+            return None
+
+        # Tenta decodificar o JSON e validar sua estrutura.
+        try:
+            new_plan = json.loads(response_text)
+            if all(k in new_plan for k in ["crew_name", "agents", "subtasks"]):
+                logger.add_log_for_ui(f"Plano Estratégico REVISADO recebido com sucesso. Nova Crew: {new_plan['crew_name']}. Nº de subtarefas: {len(new_plan['subtasks'])}.")
+                return new_plan
+            else:
+                logging.error(f"O novo plano JSON recebido está incompleto. Resposta: {response_text}")
+                return None
+        except json.JSONDecodeError as e:
+            logging.error(f"Erro ao decodificar o novo plano JSON estratégico: {e}. Resposta: {response_text}")
+            return None
+
+    def delegate_task(self, main_task_description: str, status_callback=None) -> str:
+        """
+        Orquestra o ciclo completo de execução da tarefa, incluindo o replanejamento
+        estratégico em caso de falhas repetidas e reportando o status para uma UI.
+        """
+        
         task_id = uuid.uuid4().hex[:10]
         task_root_dir = os.path.join(self.output_dir, f"task_{task_id}")
         os.makedirs(task_root_dir, exist_ok=True)
-        logging.info(f"\n{'='*20} Nova Tarefa Iniciada: {task_id} {'='*20}")
+        logger.add_log_for_ui(f"\n{'='*20} Nova Tarefa Iniciada: {task_id} {'='*20}")
         
         master_plan = self._plan_execution_strategy(main_task_description)
-        if not master_plan: return "Falha crítica no planejamento inicial. Tarefa abortada."
+        if not master_plan:
+            logger.add_log_for_ui("Falha crítica no planejamento inicial. Tarefa abortada.", "critical")
+            return "Falha crítica no planejamento inicial. Tarefa abortada."
+        
+        logger.add_log_for_ui(f"Plano Mestre criado com sucesso. Crew: '{master_plan.get('crew_name')}'.")
         
         crew_name_for_log = master_plan.get('crew_name', "DynamicCrew")
         workspace_dir = os.path.join(task_root_dir, "workspace")
         os.makedirs(workspace_dir, exist_ok=True)
+        
         agents = [Agent(agent_id=f"{task_id}_{ag['role']}", llm_service=self.llm_service, **ag) for ag in master_plan['agents']]
         crew = Crew(name=master_plan['crew_name'], description=master_plan['crew_description'], agents=agents)
+        
         feedback_history: List[str] = []
         execution_results: List[Dict] = []
         is_task_successful = False
+        failures_on_same_issue_counter = 0
+        last_feedback = ""
         
         for attempt in range(1, config.MAX_ITERATIONS + 1):
-            logging.info(f"\n--- Iniciando Tentativa de Geração/Correção {attempt}/{config.MAX_ITERATIONS} ---")
+            logger.add_log_for_ui(f"--- Iniciando Tentativa de Geração/Correção {attempt}/{config.MAX_ITERATIONS} ---")
+
+            if feedback_history:
+                current_feedback = feedback_history[-1]
+                if current_feedback == last_feedback:
+                    failures_on_same_issue_counter += 1
+                    logger.add_log_for_ui(f"Mesmo erro detectado {failures_on_same_issue_counter} vez(es) consecutivas.", "warning")
+                else:
+                    failures_on_same_issue_counter = 1
+                last_feedback = current_feedback
+
+            if failures_on_same_issue_counter > 2:
+                logger.add_log_for_ui("Falhas repetidas detectadas. Acionando replanejamento estratégico completo.", "critical")
+                new_plan = self._re_strategize_plan(main_task_description, feedback_history)
+                if new_plan:
+                    master_plan = new_plan
+                    agents = [Agent(agent_id=f"{task_id}_{ag['role']}", llm_service=self.llm_service, **ag) for ag in master_plan['agents']]
+                    crew = Crew(name=master_plan['crew_name'], description=master_plan['crew_description'], agents=agents)
+                    logger.add_log_for_ui("PLANO MESTRE REVISADO E CREW RECONFIGURADA DEVIDO A FALHAS PERSISTENTES.", "warning")
+                    failures_on_same_issue_counter = 0
+                    feedback_history = []  # A história é limpa aqui, causando o erro na próxima iteração
+                    last_feedback = ""
+                else:
+                    logger.add_log_for_ui("O replanejamento estratégico falhou. Continuando com o plano antigo.", "error")
+
             subtasks_for_this_attempt = master_plan['subtasks']
-            if attempt > 1:
+            
+            if attempt > 1 and not (failures_on_same_issue_counter > 2) and feedback_history:
                 feedback = feedback_history[-1]
                 corrective_subtasks = self._generate_corrective_subtasks(main_task_description, master_plan, feedback)
-                if corrective_subtasks is not None: 
+                if corrective_subtasks:
+                    logger.add_log_for_ui("Plano de ação corretivo gerado para focar no erro.")
                     subtasks_for_this_attempt = corrective_subtasks
-                else: 
-                    logging.error("Não foi possível gerar um plano de ação corretivo. Usando o plano mestre novamente.")
+                else:
+                    logger.add_log_for_ui("Não foi possível gerar um plano de ação corretivo. Usando o plano mestre novamente.", "error")
             
-            crew_result = crew.process_subtasks(main_task_description, subtasks_for_this_attempt, workspace_dir, attempt, feedback_history)
-            crew_result['feedback'] = feedback_history[-1] if feedback_history else "N/A"
+            # Passando o callback para a crew, para que ela também possa reportar o status
+            crew_result = crew.process_subtasks(
+                main_task_description, 
+                subtasks_for_this_attempt, 
+                workspace_dir, 
+                attempt, 
+                feedback_history,
+                status_callback=status_callback,
+                
+
+            )
             execution_results.append(crew_result)
             
-            if crew_result.get("status") == "ERRO": 
-                logging.critical("Crew falhou criticamente."); break
-            
-            # --- Hierarquia de Validação Corrigida ---
-            all_artifacts = [{"file_path": os.path.join(root, name)} for root, _, files in os.walk(workspace_dir) for name in files]
+            if crew_result.get("status") == "ERRO":
+                logger.add_log_for_ui(f"Crew falhou criticamente na tentativa {attempt}: {crew_result.get('message')}", "critical")
+                feedback_history.append(crew_result.get("message", "Erro crítico na crew."))
+                continue
 
-            # Validação 1: Auditoria de Arquivos
+            all_artifacts = [{"file_path": os.path.join(root, name)} for root, _, files in os.walk(workspace_dir) for name in files]
+            
+            # --- Hierarquia de Validação com logging para a UI ---
+            logger.add_log_for_ui("VALIDAÇÃO: Iniciando auditoria de arquivos...")
             reconciliation_result = self._reconcile_plan_with_artifacts(master_plan['subtasks'], workspace_dir)
             if not reconciliation_result["success"]:
-                logging.warning(f"Tentativa {attempt} falhou na Auditoria de Arquivos."); feedback_history.append(reconciliation_result["feedback"]); continue
+                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Auditoria de Arquivos): {reconciliation_result['feedback']}", "warning")
+                feedback_history.append(reconciliation_result["feedback"])
+                continue
 
-            # Validação 2: Estrutura de Arquivo
+            logger.add_log_for_ui("VALIDAÇÃO: Iniciando validação de estrutura...")
             structure_validation_result = self._validate_file_structure(all_artifacts)
             if not structure_validation_result["success"]:
-                logging.warning(f"Tentativa {attempt} falhou na Validação de Estrutura."); feedback_history.append(structure_validation_result["feedback"]); continue
+                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Estrutura de Arquivo): {structure_validation_result['feedback']}", "warning")
+                feedback_history.append(structure_validation_result["feedback"])
+                continue
 
-            # Validação 3: Prova Prática
+            logger.add_log_for_ui("VALIDAÇÃO: Iniciando prova prática (teste de execução)...")
             run_test_result = self._execute_run_test(workspace_dir, all_artifacts)
             if not run_test_result["success"]:
-                logging.warning(f"Tentativa {attempt} falhou na Prova Prática."); feedback_history.append(f"VALIDAÇÃO FALHOU (Prova Prática):\n{run_test_result['output']}"); continue
+                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Prova Prática): {run_test_result['output']}", "warning")
+                feedback_history.append(f"VALIDAÇÃO FALHOU (Prova Prática):\n{run_test_result['output']}")
+                continue
 
-            # Validação 4: Completude de Código
+            logger.add_log_for_ui("VALIDAÇÃO: Iniciando auditoria de completude de código...")
             review_result = self._perform_code_completeness_review(workspace_dir, all_artifacts, master_plan['subtasks'])
             if not review_result["is_complete"]:
-                logging.warning(f"Tentativa {attempt} falhou na Auditoria de Completude de Código."); feedback_history.append(review_result["feedback"]); continue
+                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Auditoria de Código): {review_result['feedback']}", "warning")
+                feedback_history.append(review_result["feedback"])
+                continue
             
-            logging.info("✅ SUCESSO! Todas as 4 etapas de validação passaram.")
+            logger.add_log_for_ui("✅ SUCESSO! Todas as etapas de validação passaram nesta tentativa.")
             is_task_successful = True
-            break # Sai do loop PORQUE foi bem-sucedido
+            break
         
         # --- Finalização ---
         final_output_dir, final_status = None, "FALHA"
         if is_task_successful:
             final_status = "SUCESSO"
+            logger.add_log_for_ui("Tarefa concluída com sucesso. Iniciando processo de curadoria final...")
             final_output_dir = self._finalize_task(task_id, main_task_description, workspace_dir, crew_name_for_log)
+            summary_of_success = f"A tarefa '{main_task_description}' foi completada com sucesso, resultando nos artefatos em {final_output_dir}."
+            self.memory.store_learning(main_task_description, summary_of_success)
+            logger.add_log_for_ui("Aprendizado da tarefa armazenado na memória de longo prazo.")
+        else:
+            logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
         
-        self._create_summary_log(task_id, main_task_description, execution_results, final_status, final_output_dir)
+        self._create_summary_add_log_for_ui(task_id, main_task_description, execution_results, final_status, final_output_dir)
         
         final_message = f"Execução da tarefa {task_id} finalizada com status: {final_status}."
         final_message += f"\nResumo salvo em: {os.path.join(self.output_dir, f'task_{task_id}_summary_log.md')}"
-        if final_output_dir: 
+        if final_output_dir:
             final_message += f"\nSaída final CURADA e organizada em: {final_output_dir}"
-        else: 
+        else:
             final_message += "\nNenhum entregável final foi produzido."
+            
         return final_message

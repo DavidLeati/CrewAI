@@ -3,64 +3,59 @@ import re
 import json
 import logging
 from typing import List, Dict, Any, Tuple
+from app_logger import logger
 
 ParsedOutput = Dict[str, Any]
 
-def parse_llm_output(llm_response_text: str) -> List[ParsedOutput]:
+def parse_llm_output(llm_response_text: str) -> List[Dict[str, Any]]:
     """
     Analisa a saída completa do LLM para extrair artefatos de código/documento
-    e mensagens de comunicação para a equipe.
+    e mensagens de comunicação para a equipe. Retorna dicionários com 'type', 'content' e 'metadata'.
     """
-    # Regex para encontrar blocos de conteúdo (```), metadados (```json) e mensagens (```message)
-    pattern = r"(```(?:[a-zA-Z]*\n[\s\S]*?\n)```|```json\n[\s\S]*?\n```|```message\n[\s\S]*?\n```)"
-    parts = re.split(pattern, llm_response_text)
-    
-    # Filtra partes vazias ou que são apenas espaços
-    parts = [p.strip() for p in parts if p and p.strip()]
+    artifacts = []
+    last_end_index = 0
+    delimiter_pattern = r"```json\s*(\{[\s\S]*?\})\s*```"
 
-    outputs: List[ParsedOutput] = []
-    
-    for i, part in enumerate(parts):
-        if part.startswith("```json"):
-            # Ignora, pois será associado ao bloco de código anterior
-            continue
-        elif part.startswith("```message"):
-            content_match = re.search(r"```message\n([\s\S]*?)\n```", part)
-            if content_match:
-                try:
-                    # O conteúdo da mensagem deve ser um JSON
-                    message_content = json.loads(content_match.group(1).strip())
-                    outputs.append({
-                        "type": "message",
-                        "content": message_content.get("content", ""),
-                        "recipient": message_content.get("recipient", "all")
+    for match in re.finditer(delimiter_pattern, llm_response_text, re.DOTALL):
+        try:
+            metadata_str = match.group(1).strip()
+            metadata = json.loads(metadata_str)
+            filename_keys = ['suggested_filename', 'artifact', 'artifact_path', 'file_path', 'artifact_name']
+            found_key = next((key for key in filename_keys if key in metadata), None)
+
+            if isinstance(metadata, dict) and found_key:
+                content = llm_response_text[last_end_index:match.start()].strip()
+                if found_key != 'suggested_filename':
+                    metadata['suggested_filename'] = metadata.pop(found_key)
+                if content:
+                    artifacts.append({
+                        "type": "artifact",
+                        "content": content,
+                        "metadata": metadata
                     })
-                    logging.info("Mensagem de comunicação parseada da saída do agente.")
-                except json.JSONDecodeError:
-                    logging.warning("Bloco de mensagem malformado (não é JSON válido) ignorado.")
-            
-        elif part.startswith("```"): # Bloco de código/documento
-            content = re.sub(r"^```[a-zA-Z]*\n|```$", "", part)
-            metadata = {}
-            
-            # Procura por um bloco JSON imediatamente a seguir
-            if i + 1 < len(parts) and parts[i + 1].startswith("```json"):
-                json_part = parts[i + 1]
-                metadata_match = re.search(r"```json\n([\s\S]*?)\n```", json_part)
-                if metadata_match:
-                    try:
-                        metadata = json.loads(metadata_match.group(1).strip())
-                    except json.JSONDecodeError:
-                        logging.warning("Bloco de metadados JSON malformado ignorado.")
-            
-            outputs.append({
-                "type": "artifact",
-                "content": content,
-                "metadata": metadata
-            })
-            logging.info("Artefato de arquivo parseado da saída do agente.")
-    
-    return outputs
+                last_end_index = match.end()
+        except json.JSONDecodeError:
+            continue
+
+    # Qualquer conteúdo restante será tratado como um artefato genérico
+    remaining_content = llm_response_text[last_end_index:].strip()
+    if remaining_content:
+        artifacts.append({
+            "type": "artifact",
+            "content": remaining_content,
+            "metadata": {}
+        })
+
+    # Se não encontrou nada mas ainda há texto, adiciona como fallback
+    if not artifacts and llm_response_text.strip():
+        artifacts.append({
+            "type": "artifact",
+            "content": llm_response_text.strip(),
+            "metadata": {}
+        })
+
+    logger.add_log_for_ui(f"Parser extraiu {len(artifacts)} artefato(s) da resposta do agente.")
+    return artifacts
 
 def clean_markdown_code_fences(code_str: str) -> str:
     """Remove de forma robusta cercas de código Markdown e blocos JSON."""
