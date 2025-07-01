@@ -58,36 +58,45 @@ class TaskManager:
         learnings = self.memory.retrieve_learnings(main_task_description)
         learnings_str = "Nenhum aprendizado passado relevante."
         if learnings:
-            learnings_str = "Aprendizados de tarefas similares passadas para sua consideração:\n" + "\n".join(learnings)
+            learnings_str = "Aprendizados de tarefas similares passadas para sua consideração:\n\n"
+            for learning in learnings:
+                learnings_str += f"--- Exemplo de Projeto Anterior ---\n"
+                learnings_str += f"Tarefa Original: {learning['task_description']}\n"
+                learnings_str += "Arquivos Gerados:\n"
+                for filename, content in learning['project_data'].items():
+                    learnings_str += f"- `{filename}`\n"
+                learnings_str += "---------------------------------\n"
 
         logger.add_log_for_ui("Planejando a estratégia de execução INICIAL...")
         prompt = (
             f"{learnings_str}\n\n"
-            "Você é uma IA de Gerenciamento de Projetos. Analise a tarefa principal e projete uma equipe e um plano de execução. "
-            "Responda ESTRITAMENTE no formato JSON.\n\n"
+            "Você é uma IA de Gerenciamento de Projetos. Analise a tarefa principal e projete uma equipe e um plano de execução. Responda ESTRITAMENTE no formato JSON.\n\n"
             f"Tarefa Principal: \"{main_task_description}\"\n\n"
-            "O JSON deve conter as chaves: 'crew_name', 'crew_description', 'agents' (uma lista de objetos com 'role', 'goal', 'backstory'), "
-            "e 'subtasks' (uma lista de objetos com 'description' e 'responsible_role'). "
-            "O 'responsible_role' em cada subtarefa DEVE corresponder a um 'role' definido na lista 'agents'. "
-            "Defina quais são os arquivos esperados para serem entregues, sendo o tipo e quantidade dos arquivos de acordo com a tarefa principal."
-            "IMPORTANTE: Nas descrições das subtarefas que envolvem criar arquivos, mencione o nome do arquivo explicitamente entre aspas, "
-            "por exemplo: \"Criar o arquivo de entrada principal 'main.ts'\" ou \"Desenvolver o controller do jogador em 'PlayerController.ts'\"."
-            "A última subtarefa DEVE ser sobre revisar tudo e gerar um resumo final.\n\n"
-            "Seja especifico nas tarefas, por exemplo:\n"
-            "Em vez de: 'Criar o Game Design Document (GDD).\n"
-            "Tente: 'Sua única tarefa é gerar o conteúdo completo para o arquivo 'GameDesignDocument.md'. O documento deve detalhar o conceito, gênero, e tema do jogo. Comece o conteúdo imediatamente, sem introduções.'\n"
-            "Exemplo de Formato:\n"
+            
+            "<regras_de_planejamento_obrigatorias>\n"
+            "1.  **Estrutura da Equipe ('agents'):** Defina os agentes necessários para a tarefa.\n"
+            "2.  **Estrutura das Subtarefas ('subtasks'):** Crie uma lista de subtarefas. As primeiras subtarefas devem ser para criar todos os arquivos de código e dados necessários.\n"
+            "3.  **A TAREFA FINAL E OBRIGATÓRIA:** A última subtarefa da lista DEVE ser uma tarefa de revisão completa. O 'responsible_role' para esta tarefa final deve ser um agente com perfil de liderança (ex: 'Arquiteto de Software', 'Gerente de Projeto', 'Desenvolvedor Sênior').\n"
+            "4.  **Descrição da Tarefa Final:** A descrição desta última tarefa deve instruir o agente a: 'Revisar todos os arquivos gerados anteriormente no workspace. Com base no conteúdo final e real dos arquivos, gere um relatório de resumo completo (ex: README.md) que descreva precisamente o projeto e como executá-lo.'\n"
+            "5.  **Nomes de Arquivos Explícitos:** Nas descrições das subtarefas que envolvem criar arquivos, mencione o nome do arquivo explicitamente entre aspas.\n"
+            "6.  **ARQUITETURA DE PÁGINA ÚNICA (SPA):** O projeto DEVE ser construído como uma aplicação de página única. Todo o conteúdo, seções e puzzles devem ser contidos em um ÚNICO arquivo `index.html`.\n"
+            "7.  **NAVEGAÇÃO INTERNA:** A transição entre as diferentes seções do jogo (ex: da introdução para o puzzle 1, do puzzle 1 para o 2) DEVE ser feita usando técnicas de CSS, como a pseudo-classe `:target` ou `:checked`, para mostrar e esconder divs. NÃO crie arquivos HTML separados como `secao1.html` ou `secao2.html`.\n"
+            "8.  **PLANO DE SUBTAREFAS:** As subtarefas devem refletir essa abordagem. Em vez de 'Criar o arquivo secao1.html', a tarefa deve ser 'Adicionar a estrutura HTML da Seção 1 dentro do `index.html` e estilizar no `style.css`.'\n"
+            "9.  **TAREFA FINAL:** A última subtarefa DEVE ser uma revisão completa do `index.html` e do `style.css` para garantir que toda a lógica e conteúdo estão corretos e coesos, gerando um `README.md` que descreva o projeto final.\n"
+            "</regras_de_planejamento_obrigatorias>\n\n"
+            
+            "Exemplo de Formato de Saída:\n"
             "{\n"
             '  "crew_name": "GameDevCrew",\n'
             '  "crew_description": "Equipe para desenvolver um jogo simples.",\n'
             '  "agents": [\n'
             '    {"role": "Designer de Jogos", "goal": "...", "backstory": "..."},\n'
-            '    {"role": "Desenvolvedor Python", "goal": "...", "backstory": "..."}\n'
+            '    {"role": "Desenvolvedor Python Sênior", "goal": "...", "backstory": "..."}\n'
             '  ],\n'
             '  "subtasks": [\n'
-            '    {"description": "Criar o Game Design Document (GDD).", "responsible_role": "Designer de Jogos"},\n'
-            '    {"description": "Implementar a lógica do jogador em Python.", "responsible_role": "Desenvolvedor Python"},\n'
-            '    {"description": "Revisar todos os artefatos e criar um relatório final.", "responsible_role": "Designer de Jogos"}\n'
+            '    {"description": "Criar o Game Design Document (GDD) no arquivo \'GameDesignDocument.md\'...", "responsible_role": "Designer de Jogos"},\n'
+            '    {"description": "Implementar a lógica do jogador em Python no arquivo \'player.py\'.", "responsible_role": "Desenvolvedor Python Sênior"},\n'
+            '    {"description": "Revisar todos os arquivos gerados (\'GameDesignDocument.md\', \'player.py\') e, com base em seu conteúdo final, criar um arquivo \'README.md\' detalhado com o resumo do projeto e as instruções de execução.", "responsible_role": "Desenvolvedor Python Sênior"}\n'
             '  ]\n'
             "}"
         )
@@ -247,7 +256,6 @@ class TaskManager:
         if not planned_files:
             logging.warning("Nenhum arquivo explícito no plano para auditar. Pulando."); return {"success": True}
         
-        # <<< CORREÇÃO: Busca recursiva de arquivos gerados >>>
         all_generated_files = []
         for root, _, files in os.walk(workspace_dir):
             for name in files:
@@ -259,7 +267,7 @@ class TaskManager:
         missing_files = planned_files - generated_relative_paths
 
         if not missing_files:
-            logger.add_log_for_ui("✅ Auditoria bem-sucedida! Todos os arquivos planejados foram gerados."); return {"success": True}
+            logger.add_log_for_ui("Auditoria bem-sucedida! Todos os arquivos planejados foram gerados."); return {"success": True}
         else:
             feedback = (f"FALHA DE AUDITORIA: O plano exigia a criação dos seguintes arquivos, mas eles não foram encontrados: {list(missing_files)}. A próxima iteração DEVE focar em gerar o CÓDIGO-FONTE para esses arquivos.")
             logging.error(feedback); return {"success": False, "feedback": feedback}
@@ -493,7 +501,7 @@ class TaskManager:
         except (json.JSONDecodeError, ValueError) as e:
             logging.error(f"Erro na curadoria final por IA: {e}. Usando fallback para copiar arquivos .py, .md e .txt.")
             # Fallback seguro: copia os tipos de arquivo mais comuns para entrega.
-            return [f for f in all_files if f.endswith(('.py', '.md', '.txt')) and 'fallback' not in f]
+            return [f for f in all_files if f.endswith(('.py', '.md', '.txt', '.json')) and 'fallback' not in f]
 
     def _finalize_task(self, task_id: str, main_task_description: str, workspace_dir: str, crew_name: str) -> Optional[str]:
         """
@@ -538,6 +546,19 @@ class TaskManager:
                 destination_path = os.path.join(final_output_dir, filename)
                 shutil.copy2(source_path, destination_path)
             
+            final_project_data = {}
+            if deliverables_to_copy:
+                for filename in deliverables_to_copy:
+                    try:
+                        with open(os.path.join(final_output_dir, filename), 'r', encoding='utf-8') as f:
+                            final_project_data[filename] = f.read()
+                    except Exception as e:
+                        logger.add_log_for_ui(f"Não foi possível ler o arquivo final '{filename}' para armazenar na memória: {e}", "warning")
+                
+                # Armazena o projeto completo na memória
+                if final_project_data:
+                    self.memory.store_learning(main_task_description, final_project_data)
+
             logger.add_log_for_ui(f"Artefatos finais curados e copiados com sucesso para: '{final_output_dir}'")
             return final_output_dir
             
@@ -645,7 +666,7 @@ class TaskManager:
             logging.error(f"Erro ao decodificar o novo plano JSON estratégico: {e}. Resposta: {response_text}")
             return None
 
-    def delegate_task(self, main_task_description: str, status_callback=None) -> str:
+    def delegate_task(self, main_task_description: str, status_callback=None, uploaded_files_content: dict = None):
         """
         Orquestra o ciclo completo de execução da tarefa, incluindo o replanejamento
         estratégico em caso de falhas repetidas e reportando o status para uma UI.
@@ -721,8 +742,7 @@ class TaskManager:
                 attempt, 
                 feedback_history,
                 status_callback=status_callback,
-                
-
+                uploaded_files_content=uploaded_files_content
             )
             execution_results.append(crew_result)
             

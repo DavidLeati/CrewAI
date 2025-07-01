@@ -9,7 +9,7 @@ from collections import defaultdict, deque
 import json
 import threading
 import os
-import sys # For directing error output to stderr
+import sys
 import cloudscraper
 from newspaper import Article, Config as NewspaperConfig
 
@@ -18,13 +18,14 @@ from newspaper import Article, Config as NewspaperConfig
 # indexing, and search parameters.
 CONFIG = {
     "DATABASE_NAME": "db/search_index.db",
-    "SCRAPE_INTERVAL_SECONDS": 3600, # How often to re-scrape sources (1 hour)
+    "SCRAPE_INTERVAL_SECONDS": 10, # How often to re-scrape sources (1 hour)
     "MAX_CONCURRENT_SCRAPES": 5, # Limits parallel HTTP requests for politeness
     "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
     "MAX_SNIPPET_LENGTH": 300, # Max characters for the snippet returned to LLM
     "MAX_RESULTS_PER_QUERY": 5, # Max search results to return
     "SCRAPE_TIMEOUT_SECONDS": 10, # Timeout for individual HTTP requests
     "SCRAPE_DELAY_SECONDS": 0.5, # Delay between individual HTTP requests to be polite
+    "MIN_CONTENT_LENGTH": 200, # Define um tamanho mínimo para considerar a extração um sucesso
     "PAGINATION_HINTS": {
         "text": ["next", "próxima", "seguinte", "next page", "próxima página", ">", ">>"],
         "css_class": ["next", "next-page", "pagination-next", "proxima", "page-next", "next-posts-link"],
@@ -199,6 +200,20 @@ class DataAcquisitionModule:
                 print(f"Warning: newspaper3k could not extract main content from {url}. Skipping.", file=sys.stderr)
                 return None
             
+            if len(clean_text) < CONFIG["MIN_CONTENT_LENGTH"]:
+                print(f"Warning: newspaper3k extracted very little content. Falling back to BeautifulSoup for {url}")
+                # Fallback: Usa o BeautifulSoup para extrair todo o texto da página
+                soup = BeautifulSoup(article.html, 'html.parser')
+                
+                # Garante um título, mesmo que genérico
+                if not clean_title:
+                     clean_title = soup.title.string if soup.title and soup.title.string else "No Title"
+
+                for script_or_style in soup(['script', 'style', 'header', 'footer', 'nav', 'aside']):
+                    script_or_style.decompose() # Remove as partes mais comuns de "lixo"
+                
+                clean_text = soup.get_text(separator=' ', strip=True)
+                
             # Usamos o BeautifulSoup apenas para encontrar os links na página bruta
             # para continuar a navegação do nosso scraper.
             soup = BeautifulSoup(article.html, 'html.parser')

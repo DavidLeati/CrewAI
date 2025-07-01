@@ -44,7 +44,8 @@ class Agent:
                      iteration_num: int,
                      context_artifacts: List[Dict[str, Any]],
                      feedback_history: List[str],
-                     shared_context: SharedContext 
+                     shared_context: SharedContext,
+                     uploaded_files_content: dict = None
                      ) -> List[Dict[str, Any]]:
         
         is_correction_attempt = bool(feedback_history)
@@ -78,7 +79,14 @@ class Agent:
 
             if is_correction_attempt:
                 context_summary += f"\n--- HISTÓRICO DE FEEDBACK (MAIS RECENTE É MAIS IMPORTANTE) ---\n" + "\n---\n".join(reversed(feedback_history))
-        
+            
+            if uploaded_files_content:
+                context_summary += "\n--- CONTEÚDO DOS ARQUIVOS ANEXADOS ---\n"
+                for filename, content in uploaded_files_content.items():
+                    context_summary += f"--- Arquivo: {filename} ---\n"
+                    context_summary += f"```\n{content}\n```\n"
+                context_summary += "-------------------------------------\n"
+                
             communication_history = shared_context.get_full_context_for_prompt(self.role)
             context_summary += f"\n--- HISTÓRICO DE COMUNICAÇÃO DA EQUIPE ---\n{communication_history}\n"
 
@@ -341,7 +349,7 @@ class Crew:
 
         logger.add_log_for_ui(f"Crew '{self.name}' criada com {len(agents)} agentes: {list(self.agents.keys())}")
 
-    def process_subtasks(self, main_task_description: str, subtasks: List[Dict[str, Any]], task_workspace_dir: str, iteration_num: int, feedback_history: List[str], status_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    def process_subtasks(self, main_task_description: str, subtasks: List[Dict[str, Any]], task_workspace_dir: str, iteration_num: int, feedback_history: List[str], status_callback: Optional[Callable[[str], None]] = None, uploaded_files_content: dict = None) -> Dict[str, Any]:
         logger.add_log_for_ui(f"Crew '{self.name}' (Tentativa {iteration_num}) iniciando processamento de {len(subtasks)} subtarefas.")
         iteration_artifacts_metadata: List[Dict[str, Any]] = []
         for i, subtask in enumerate(subtasks):
@@ -353,7 +361,7 @@ class Crew:
             if not agent:
                 logger.add_log_for_ui(f"ERRO: Papel '{responsible_role}' não encontrado na crew. Pulando.", "error"); continue
             
-            artifacts_metadata_list = agent.execute_task(main_task_description, subtask_desc, task_workspace_dir, iteration_num, list(iteration_artifacts_metadata), feedback_history, self.shared_context)
+            artifacts_metadata_list = agent.execute_task(main_task_description, subtask_desc, task_workspace_dir, iteration_num, list(iteration_artifacts_metadata), feedback_history, self.shared_context, uploaded_files_content)
             
             if artifacts_metadata_list:
                 iteration_artifacts_metadata.extend(artifacts_metadata_list)

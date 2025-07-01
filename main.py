@@ -5,8 +5,10 @@ import google.generativeai as genai
 from flask import Flask, render_template_string, jsonify, request
 from threading import Thread, Lock
 import time
-from app_logger import logger
+import pandas as pd
+from werkzeug.utils import secure_filename
 
+from app_logger import logger
 from config import config, setup_logging
 from services import GeminiService
 from tasks import TaskManager
@@ -23,6 +25,8 @@ def ui_callback(message: str):
     if len(app_logs) > 300:
         app_logs.pop(0)
     app_logs.append(f"[{timestamp}] {message}")
+
+logger.setup(ui_callback=ui_callback)
 
 # --- Configuração da Aplicação Flask ---
 app = Flask(__name__)
@@ -41,30 +45,29 @@ HTML_TEMPLATE = """
         .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1, h2 { color: #444; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         #logs { height: 50vh; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background-color: #fafafa; border-radius: 5px; line-height: 1.6; white-space: pre-wrap; font-family: "SF Mono", "Fira Code", "Roboto Mono", monospace; font-size: 14px; margin-top: 15px; }
-        .log-line { padding: 2px 5px; margin-bottom: 2px; border-radius: 3px; }
         textarea { width: 98%; padding: 10px; border-radius: 5px; border: 1px solid #ccc; font-size: 15px; min-height: 120px; }
         button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px; }
         button:disabled { background-color: #aaa; cursor: not-allowed; }
         #status { margin-top: 15px; font-weight: bold; }
     </style>
     <script>
-        // Função para buscar e atualizar os logs
         async function fetchLogs() {
             try {
                 const response = await fetch('/status');
                 const data = await response.json();
                 
-                // Atualiza o status
                 const statusDiv = document.getElementById('status');
                 const runButton = document.getElementById('runButton');
                 const taskText = document.getElementById('taskText');
+                const fileInput = document.getElementById('fileInput');
+
                 statusDiv.textContent = data.is_running ? 'Status: Missão em andamento...' : 'Status: Aguardando nova missão.';
                 runButton.disabled = data.is_running;
                 taskText.disabled = data.is_running;
+                fileInput.disabled = data.is_running;
 
-                // Atualiza os logs
                 const logDiv = document.getElementById('logs');
-                const shouldScroll = logDiv.scrollTop + logDiv.clientHeight === logDiv.scrollHeight;
+                const shouldScroll = logDiv.scrollTop + logDiv.clientHeight >= logDiv.scrollHeight - 10;
                 logDiv.innerHTML = data.logs.map(log => `<div class="log-line">${escapeHtml(log)}</div>`).join('');
                 if (shouldScroll) {
                     logDiv.scrollTop = logDiv.scrollHeight;
@@ -74,25 +77,32 @@ HTML_TEMPLATE = """
             }
         }
 
-        // Função para iniciar a tarefa
         async function startTask() {
             const taskDescription = document.getElementById('taskText').value;
+            const files = document.getElementById('fileInput').files;
+
             if (!taskDescription.trim()) {
                 alert('Por favor, defina uma tarefa.');
                 return;
             }
             
+            const formData = new FormData();
+            formData.append('tarefa', taskDescription);
+            for (let i = 0; i < files.length; i++) {
+                formData.append('files', files[i]);
+            }
+
             try {
                 const response = await fetch('/start', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tarefa: taskDescription })
+                    body: formData
                 });
+                
                 const data = await response.json();
                 if (!data.success) {
                     alert('Erro ao iniciar a tarefa: ' + data.message);
                 }
-                fetchLogs(); // Atualiza o status imediatamente
+                fetchLogs();
             } catch (error) {
                 console.error("Erro ao iniciar a tarefa:", error);
             }
@@ -100,24 +110,29 @@ HTML_TEMPLATE = """
 
         function escapeHtml(text) {
           var map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-          return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+          return text.toString().replace(/[&<>"']/g, function(m) { return map[m]; });
         }
 
         window.onload = () => {
-            setInterval(fetchLogs, 2000); // Inicia o polling
-            document.getElementById('runButton').addEventListener('click', startTask);
+            setInterval(fetchLogs, 2000);
+            document.getElementById('taskForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                startTask();
+            });
         };
     </script>
 </head>
 <body>
     <div class="container">
         <h1>Painel de Controle da Missão</h1>
-        <h2>Defina a Tarefa</h2>
-        <textarea id="taskText" placeholder="Descreva aqui a tarefa complexa para a equipe de IAs..."></textarea>
-        <button id="runButton">Iniciar Missão</button>
-        
-        <div id="status">Status: Carregando...</div>
-        
+        <form id="taskForm">
+            <h2>Defina a Tarefa</h2>
+            <textarea id="taskText" placeholder="Descreva aqui a tarefa complexa..."></textarea>
+            <h2>Anexar Arquivos (Opcional)</h2>
+            <input type="file" id="fileInput" multiple>
+            <button id="runButton">Iniciar Missão</button>
+        </form>
+        <div id="status">Status: Aguardando conexão...</div>
         <h2>Logs da Missão</h2>
         <div id="logs"><div class="log-line">Aguardando conexão...</div></div>
     </div>
@@ -145,20 +160,39 @@ def start_task_endpoint():
         if is_task_running:
             return jsonify({"success": False, "message": "Uma tarefa já está em andamento."}), 400
 
-        data = request.get_json()
-        tarefa = data.get('tarefa')
+        tarefa = request.form.get('tarefa')
         if not tarefa:
             return jsonify({"success": False, "message": "A descrição da tarefa não pode ser vazia."}), 400
 
+        # --- Lógica de Processamento de Arquivos ---
+        uploaded_files_content = {}
+        if 'files' in request.files:
+            files = request.files.getlist('files')
+            for file in files:
+                if file and file.filename:
+                    filename = secure_filename(file.filename)
+                    content = ""
+                    try:
+                        if filename.endswith(('.xlsx', '.xls')):
+                            df = pd.read_excel(file)
+                            content = df.to_string()
+                        else: # Para .txt, .py, .html, etc.
+                            content = file.read().decode('utf-8')
+                        
+                        uploaded_files_content[filename] = content
+                        logger.add_log_for_ui(f"Arquivo '{filename}' recebido e processado.")
+                    except Exception as e:
+                        logger.add_log_for_ui(f"Erro ao processar o arquivo '{filename}': {e}", "error")
+
         # Inicia a tarefa da CrewAI em uma thread
-        thread = Thread(target=run_crewai_task_in_background, args=(app.task_manager, tarefa))
+        thread = Thread(target=run_crewai_task_in_background, args=(app.task_manager, tarefa, uploaded_files_content))
         thread.daemon = True
         thread.start()
         is_task_running = True
     
     return jsonify({"success": True, "message": "Tarefa iniciada."})
 
-def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str):
+def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str, uploaded_content: dict):
     """Função que executa a tarefa da CrewAI em segundo plano."""
     global is_task_running
     
@@ -167,7 +201,11 @@ def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str):
     ui_callback("=> Missão Iniciada. O TaskManager está assumindo o controle.")
     
     try:
-        resultado_final = task_manager.delegate_task(main_task_description=tarefa, status_callback=ui_callback)
+        resultado_final = task_manager.delegate_task(
+                            main_task_description=tarefa,
+                            status_callback=ui_callback,
+                            uploaded_files_content=uploaded_content
+                            )
         ui_callback(f"========= EXECUÇÃO FINALIZADA =========")
         for line in resultado_final.split('\n'):
             ui_callback(line)
@@ -182,8 +220,6 @@ def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str):
 def main():
     """Ponto de entrada principal da aplicação."""
     setup_logging()
-
-    logger.setup(ui_callback=ui_callback)
 
     try:
         from keys import GOOGLE_API
