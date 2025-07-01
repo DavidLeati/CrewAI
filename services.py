@@ -7,6 +7,7 @@ import os
 import json
 import time
 from datetime import datetime
+import random
 
 from config import config
 from app_logger import logger
@@ -14,9 +15,10 @@ from search_util import LLMSearchSystem
 
 class GeminiService:
     """Serviço para interagir com a API do Gemini, gerenciando chamadas e configurações."""
-    def __init__(self, model_name: str, fallback_model_name: str, search_system: LLMSearchSystem):
+    def __init__(self, model_name: str, fallback_model_name: str, search_system: LLMSearchSystem, chaos_mode: bool = False):
         self.model_name = model_name
         self.fallback_model_name = fallback_model_name
+        self.chaos_mode = chaos_mode
         try:
             self.model = genai.GenerativeModel(self.model_name)
             self.model_for_json = genai.GenerativeModel(
@@ -35,8 +37,18 @@ class GeminiService:
 
     def generate_text(self, prompt: str, temperature: float, is_json_output: bool = False) -> Dict[str, Any]:
         """Gera texto e retorna um dicionário com o texto e o motivo da finalização, salvando o resultado em disco."""
+        if self.chaos_mode and random.random() < 0.1: # 10% de chance de falha
+            chaos_type = random.choice(['api_error', 'bad_json', 'empty_response'])
+            logger.add_log_for_ui(f"CHAOS MODE: Injetando erro do tipo '{chaos_type}'", "warning")
+
+            if chaos_type == 'api_error':
+                return {"text": "Erro 500: Erro interno do servidor (Simulado pelo Chaos Mode)", "finish_reason": "ERROR"}
+            if chaos_type == 'bad_json':
+                return {"text": '{"key": "value",,, "bad_syntax"}', "finish_reason": "STOP"} # JSON inválido
+            if chaos_type == 'empty_response':
+                return {"text": "", "finish_reason": "EMPTY"}       
+       
         current_model = self.model_for_json if is_json_output else self.model
-        
         for attempt in range(config.MAX_RETRIES_API + 1):
             try:
                 generation_config = genai.types.GenerationConfig(temperature=temperature)

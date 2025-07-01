@@ -26,16 +26,73 @@ class Agent:
         self.llm_service = llm_service
         self.agent_id = agent_id
 
-    def _infer_content_type(self, content: str) -> str:
-        """Analisa um bloco de texto e infere se é código ou documento."""
-        # Palavras-chave que indicam fortemente que o conteúdo é código.
-        code_keywords = [
+    def _infer_content_type(self, content: str, analysis_depth_lines: int = 20) -> str:
+        """
+        Analisa um bloco de texto de forma mais robusta para inferir se é código ou documento,
+        usando um sistema de pontuação baseado em heurísticas.
+        """
+        if not isinstance(content, str) or not content.strip():
+            return 'document'
+
+        code_score = 0
+        lines = content.strip().splitlines()
+        lines_to_analyze = lines[:analysis_depth_lines]
+
+        # 1. Indicadores Fortes de Código (alta pontuação)
+        strong_code_keywords = [
             'import ', 'from ', 'def ', 'class ', 'function ', 'const ', 'let ', 'var ',
-            'public class', 'public static', 'void main', '#include', '=>', '={', '};'
+            'public class', 'public static', 'void main', '#include', 'require(', 'using '
         ]
-        for line in content.splitlines()[:5]:
-            if any(keyword in line for keyword in code_keywords): return 'code'
-        return 'document'
+        # Shebangs no início do arquivo
+        if lines and lines[0].startswith('#!'):
+            code_score += 10
+
+        for line in lines_to_analyze:
+            # Palavras-chave de definição/importação
+            if any(keyword in line for keyword in strong_code_keywords):
+                code_score += 5
+            
+            # Sintaxe de comentários de código
+            if line.strip().startswith(('//', '#', '/*')):
+                code_score += 2
+
+            # Finais de linha comuns em código
+            if line.strip().endswith((';', '{', '}', '):', '=> {')):
+                code_score += 2
+
+        # 2. Densidade de Caracteres Especiais
+        text_sample = "\n".join(lines_to_analyze)
+        total_chars = len(text_sample)
+        if total_chars > 0:
+            special_chars = sum(text_sample.count(c) for c in '(){}[]<>;:=!&|+-*/%')
+            density = special_chars / total_chars
+            if density > 0.1:  # Mais de 10% de caracteres são símbolos de código
+                code_score += 10
+            elif density > 0.05: # Mais de 5%
+                code_score += 5
+
+        # 3. Indicadores de Documento (pontuação negativa)
+        # Verifica se há sentenças longas e bem formadas (prosa)
+        prose_indicators = 0
+        for line in lines_to_analyze:
+            line = line.strip()
+            # Linhas longas com espaços e terminando com um ponto.
+            if len(line) > 80 and line.endswith('.') and ' ' in line:
+                prose_indicators += 1
+        
+        if prose_indicators >= 2: # Se encontrar 2 ou mais linhas que parecem prosa
+            code_score -= 10
+            
+        # Títulos de Markdown
+        if any(line.strip().startswith(('# ', '## ')) for line in lines_to_analyze):
+             code_score -= 5
+
+        # Decisão Final com base na pontuação
+        # O limiar de 10 foi escolhido empiricamente. Pode ser ajustado.
+        if code_score >= 10:
+            return 'code'
+        else:
+            return 'document'
 
     def execute_task(self,
                      main_task_description: str,
@@ -56,6 +113,17 @@ class Agent:
             # --- Construção do Contexto ---
             context_summary = "Nenhum artefato de contexto anterior fornecido.\n"
             if context_artifacts:
+                latest_artifacts = {}
+                for artifact in context_artifacts:
+                    file_path = artifact.get('file_path')
+                    if file_path:
+                        # A chave é o caminho do arquivo; o valor é o artefato mais recente encontrado.
+                        # Como a lista é sequencial, o último artefato para um caminho será sempre o mais novo.
+                        latest_artifacts[file_path] = artifact
+                
+                # Usa a lista filtrada de artefatos únicos e mais recentes.
+                artifacts_to_process = list(latest_artifacts.values())
+
                 context_summary = "A seguir estão os artefatos de contexto já existentes:\n"
                 critical_files_in_feedback = set()
                 if is_correction_attempt:
@@ -63,7 +131,7 @@ class Agent:
                     found_paths = re.findall(r'File "[^"]*[\\/]([\w\._-]+)"', feedback_text_for_search)
                     critical_files_in_feedback.update(found_paths)
                 
-                for art_meta in context_artifacts:
+                for art_meta in artifacts_to_process:
                     filename = os.path.basename(art_meta.get('file_path', 'N/A'))
                     context_summary += f"\n--- Artefato: '{filename}' ---\n"
                     try:
@@ -72,7 +140,7 @@ class Agent:
                                 content = f.read()
                                 context_summary += f"```\n[CONTEÚDO COMPLETO DO ARQUIVO CRÍTICO]\n{content}\n```\n"
                             else:
-                                content = f.read(10000)
+                                content = f.read(20000)
                                 context_summary += f"```\n{content}\n"
                     except Exception as e:
                         context_summary += f"[Não foi possível ler o arquivo: {e}]\n"

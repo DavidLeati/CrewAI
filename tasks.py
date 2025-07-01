@@ -120,6 +120,42 @@ class TaskManager:
             logging.error(f"Erro ao decodificar o plano JSON inicial: {e}. Resposta: {response_text}")
             return None
 
+    def _rewrite_task_with_prompt_engineering(self, main_task_description: str) -> str:
+        """Usa o LLM para reescrever a tarefa do usuário com engenharia de prompt."""
+        logger.add_log_for_ui("Reescrevendo a tarefa com engenharia de prompt para otimizar a clareza...")
+
+        prompt = (
+            "<identidade>Você é um Engenheiro de Prompts especialista. Sua missão é reescrever a tarefa de um usuário para ser o mais clara, detalhada e otimizada possível para uma equipe de agentes de IA. A tarefa reescrita deve guiar a IA a produzir um resultado de alta qualidade.</identidade>\n\n"
+            "<contexto>\n"
+            f"  - TAREFA ORIGINAL DO USUÁRIO: \"{main_task_description}\"\n"
+            "</contexto>\n\n"
+            "<tarefa>\n"
+            "  Reescreva a tarefa acima. Siga estas diretrizes:\n"
+            "  1.  **Clarifique o Objetivo:** Expanda a descrição para que não haja ambiguidade sobre o que precisa ser entregue.\n"
+            "  2.  **Defina o Escopo:** Adicione detalhes sobre as funcionalidades esperadas e, se possível, o que está fora do escopo.\n"
+            "  3.  **Sugira a Estrutura:** Proponha uma estrutura de arquivos ou componentes que a IA deve criar.\n"
+            "  4.  **Adicione Critérios de Qualidade:** Inclua pontos sobre o que tornaria o resultado final excelente (ex: código limpo, boa documentação, design responsivo, etc.).\n"
+            "  5.  **Mantenha a Intenção Original:** A nova tarefa deve ser uma versão aprimorada da original, não algo completamente diferente.\n"
+            "  6.  **Limitações das IAs:** Lembre-se que as IAs podem ter limitações em entender nuances complexas. Use linguagem simples e direta.\n"
+            "  7.  **Tipos de Arquivos:** A IA não tem capacidade de gerar arquivos binários complexos como imagens, vídeos ou sons. Foque em arquivos de texto, código e dados.\n"
+            "</tarefa>\n\n"
+            "<regras_de_saida>\n"
+            "  - Sua resposta deve ser APENAS o texto da nova tarefa reescrita.\n"
+            "  - Não inclua saudações, explicações ou qualquer texto que não seja a própria tarefa aprimorada.\n"
+            "</regras_de_saida>"
+        )
+
+        response_dict = self.llm_service.generate_text(prompt, temperature=0.3)
+        rewritten_task = response_dict.get('text', main_task_description).strip()
+
+        if rewritten_task and rewritten_task != main_task_description:
+            logger.add_log_for_ui("Tarefa reescrita com sucesso.")
+            logging.info(f"--- Tarefa Original ---\n{main_task_description}\n\n--- Tarefa Aprimorada ---\n{rewritten_task}")
+            return rewritten_task
+        else:
+            logger.add_log_for_ui("Não foi possível reescrever a tarefa, usando a original.", "warning")
+            return main_task_description
+
     def _create_debugging_subtask(self, traceback: str, workspace_dir: str, original_plan: Dict) -> Optional[List[Dict[str, Any]]]:
         """
         Analisa um traceback e cria uma única subtarefa focada para corrigir o(s) arquivo(s) com erro.
@@ -677,7 +713,9 @@ class TaskManager:
         os.makedirs(task_root_dir, exist_ok=True)
         logger.add_log_for_ui(f"\n{'='*20} Nova Tarefa Iniciada: {task_id} {'='*20}")
         
-        master_plan = self._plan_execution_strategy(main_task_description)
+        enhanced_task_description = self._rewrite_task_with_prompt_engineering(main_task_description)
+
+        master_plan = self._plan_execution_strategy(enhanced_task_description)
         if not master_plan:
             logger.add_log_for_ui("Falha crítica no planejamento inicial. Tarefa abortada.", "critical")
             return "Falha crítica no planejamento inicial. Tarefa abortada."
@@ -711,7 +749,7 @@ class TaskManager:
 
             if failures_on_same_issue_counter > 2:
                 logger.add_log_for_ui("Falhas repetidas detectadas. Acionando replanejamento estratégico completo.", "critical")
-                new_plan = self._re_strategize_plan(main_task_description, feedback_history)
+                new_plan = self._re_strategize_plan(enhanced_task_description, feedback_history)
                 if new_plan:
                     master_plan = new_plan
                     agents = [Agent(agent_id=f"{task_id}_{ag['role']}", llm_service=self.llm_service, **ag) for ag in master_plan['agents']]
@@ -727,7 +765,7 @@ class TaskManager:
             
             if attempt > 1 and not (failures_on_same_issue_counter > 2) and feedback_history:
                 feedback = feedback_history[-1]
-                corrective_subtasks = self._generate_corrective_subtasks(main_task_description, master_plan, feedback)
+                corrective_subtasks = self._generate_corrective_subtasks(enhanced_task_description, master_plan, feedback)
                 if corrective_subtasks:
                     logger.add_log_for_ui("Plano de ação corretivo gerado para focar no erro.")
                     subtasks_for_this_attempt = corrective_subtasks
@@ -736,7 +774,7 @@ class TaskManager:
             
             # Passando o callback para a crew, para que ela também possa reportar o status
             crew_result = crew.process_subtasks(
-                main_task_description, 
+                enhanced_task_description, 
                 subtasks_for_this_attempt, 
                 workspace_dir, 
                 attempt, 
@@ -791,14 +829,11 @@ class TaskManager:
         if is_task_successful:
             final_status = "SUCESSO"
             logger.add_log_for_ui("Tarefa concluída com sucesso. Iniciando processo de curadoria final...")
-            final_output_dir = self._finalize_task(task_id, main_task_description, workspace_dir, crew_name_for_log)
-            summary_of_success = f"A tarefa '{main_task_description}' foi completada com sucesso, resultando nos artefatos em {final_output_dir}."
-            self.memory.store_learning(main_task_description, summary_of_success)
-            logger.add_log_for_ui("Aprendizado da tarefa armazenado na memória de longo prazo.")
+            final_output_dir = self._finalize_task(task_id, enhanced_task_description, workspace_dir, crew_name_for_log)
         else:
             logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
         
-        self._create_summary_add_log_for_ui(task_id, main_task_description, execution_results, final_status, final_output_dir)
+        self._create_summary_add_log_for_ui(task_id, enhanced_task_description, execution_results, final_status, final_output_dir)
         
         final_message = f"Execução da tarefa {task_id} finalizada com status: {final_status}."
         final_message += f"\nResumo salvo em: {os.path.join(self.output_dir, f'task_{task_id}_summary_log.md')}"
