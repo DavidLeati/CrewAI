@@ -199,8 +199,8 @@ def main():
         return
 
     search_system = LLMSearchSystem()
-    search_system.start_background_scraper() # Inicia o rastreador em segundo plano
-
+    # search_system.start_background_scraper() # Inicia o rastreador em segundo plano
+ 
     gemini_service = GeminiService(
         model_name=config.MODEL_NAME, 
         fallback_model_name=config.FALLBACK_MODEL_NAME,

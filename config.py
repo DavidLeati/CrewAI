@@ -14,7 +14,7 @@ class Config:
     TEMPERATURE_PLANNING: float = 0.2
     TEMPERATURE_EXECUTION: float = 0.4
     TEMPERATURE_VALIDATION: float = 0.1
-    OUTPUT_ROOT_DIR: str = "resultados_dinamicos_ia"
+    OUTPUT_ROOT_DIR: str = "resultados"
     VERBOSE_LOGGING: bool = True
 
 # Instancia a configuração para ser importada por outros módulos

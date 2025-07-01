@@ -1,5 +1,4 @@
 # search_util.py
-
 import logging
 import sqlite3
 import requests
@@ -13,7 +12,6 @@ import os
 import sys # For directing error output to stderr
 import cloudscraper
 from newspaper import Article, Config as NewspaperConfig
-
 
 # --- Configuration ---
 # Consolidated configuration for the entire system, including data acquisition,

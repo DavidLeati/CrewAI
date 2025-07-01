@@ -477,7 +477,8 @@ class TaskManager:
             "</regras_de_saida>"
         )
 
-        response_str = self.llm_service.generate_text(prompt, temperature=0.1, is_json_output=True)
+        response_dict = self.llm_service.generate_text(prompt, temperature=0.1, is_json_output=True)
+        response_str = response_dict.get('text', '{}')
         
         try:
             curation_data = json.loads(response_str)
@@ -761,7 +762,7 @@ class TaskManager:
                 feedback_history.append(review_result["feedback"])
                 continue
             
-            logger.add_log_for_ui("✅ SUCESSO! Todas as etapas de validação passaram nesta tentativa.")
+            logger.add_log_for_ui("SUCESSO! Todas as etapas de validação passaram nesta tentativa.")
             is_task_successful = True
             break
         

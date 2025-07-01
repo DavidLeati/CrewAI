@@ -60,8 +60,8 @@ def parse_llm_output(llm_response_text: str) -> List[Dict[str, Any]]:
 def clean_markdown_code_fences(code_str: str) -> str:
     """Remove de forma robusta cercas de código Markdown e blocos JSON."""
     if not isinstance(code_str, str): return ""
-    cleaned_str = re.sub(r"```json\s*\{[\s\S]*?\}\s*```", "", code_str, flags=re.DOTALL)
-    cleaned_str = re.sub(r"^\s*```[a-zA-Z]*\n?|\n?\s*```\s*$", "", cleaned_str, flags=re.MULTILINE)
+    cleaned_str = re.sub(r"^\s*```[a-zA-Z]*\n?|\n?\s*```\s*$", "", code_str, flags=re.MULTILINE)
+
     return cleaned_str.strip()
 
 def sanitize_filename(filename: str, fallback_name: str = "fallback_artifact.txt") -> str:

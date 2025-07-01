@@ -103,6 +103,7 @@ class Agent:
                 "  - Sua resposta DEVE OBRIGATORIAMENTE terminar com um ou mais blocos de metadados ```json, cada um seguindo seu respectivo bloco de conteúdo.\n"
                 "  - NÃO gere scripts de shell (bash, sh, cmd). Gere o conteúdo interno dos arquivos.\n"
                 "  - Para se comunicar com outros agentes, use um bloco ```message. O conteúdo DEVE ser um JSON com as chaves 'recipient' (o 'role' do destinatário) e 'content' (sua mensagem).\n"
+                "  - NÃO subscreva arquivos sem escrever todo o conteúdo do artefato. Se o arquivo já existir, verifique se é seguro sobrescrever.\n"
                 "</regras_inviolaveis_de_saida>\n\n"
             )
 
