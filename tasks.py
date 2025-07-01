@@ -228,7 +228,7 @@ class TaskManager:
             
             # (Futuramente, outras validações estruturais, como linter de python, podem ser adicionadas aqui)
 
-        logger.add_log_for_ui("✅ Validação de Estrutura de Arquivo bem-sucedida.")
+        logger.add_log_for_ui("Validação de Estrutura de Arquivo bem-sucedida.")
         return {"success": True, "feedback": "A estrutura de todos os arquivos validados está correta."}
 
     def _reconcile_plan_with_artifacts(self, subtasks: List[Dict[str, Any]], workspace_dir: str) -> Dict[str, Any]:
