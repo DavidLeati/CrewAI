@@ -8,6 +8,7 @@ import subprocess
 from typing import List, Dict, Any, Optional
 import re
 
+
 from config import config
 from services import GeminiService
 from agents import Agent, Crew
@@ -75,14 +76,18 @@ class TaskManager:
             
             "<regras_de_planejamento_obrigatorias>\n"
             "1.  **Estrutura da Equipe ('agents'):** Defina os agentes necessários para a tarefa.\n"
-            "2.  **Estrutura das Subtarefas ('subtasks'):** Crie uma lista de subtarefas. As primeiras subtarefas devem ser para criar todos os arquivos de código e dados necessários.\n"
-            "3.  **A TAREFA FINAL E OBRIGATÓRIA:** A última subtarefa da lista DEVE ser uma tarefa de revisão completa. O 'responsible_role' para esta tarefa final deve ser um agente com perfil de liderança (ex: 'Arquiteto de Software', 'Gerente de Projeto', 'Desenvolvedor Sênior').\n"
-            "4.  **Descrição da Tarefa Final:** A descrição desta última tarefa deve instruir o agente a: 'Revisar todos os arquivos gerados anteriormente no workspace. Com base no conteúdo final e real dos arquivos, gere um relatório de resumo completo (ex: README.md) que descreva precisamente o projeto e como executá-lo.'\n"
-            "5.  **Nomes de Arquivos Explícitos:** Nas descrições das subtarefas que envolvem criar arquivos, mencione o nome do arquivo explicitamente entre aspas.\n"
-            "6.  **ARQUITETURA DE PÁGINA ÚNICA (SPA):** O projeto DEVE ser construído como uma aplicação de página única. Todo o conteúdo, seções e puzzles devem ser contidos em um ÚNICO arquivo `index.html`.\n"
-            "7.  **NAVEGAÇÃO INTERNA:** A transição entre as diferentes seções do jogo (ex: da introdução para o puzzle 1, do puzzle 1 para o 2) DEVE ser feita usando técnicas de CSS, como a pseudo-classe `:target` ou `:checked`, para mostrar e esconder divs. NÃO crie arquivos HTML separados como `secao1.html` ou `secao2.html`.\n"
-            "8.  **PLANO DE SUBTAREFAS:** As subtarefas devem refletir essa abordagem. Em vez de 'Criar o arquivo secao1.html', a tarefa deve ser 'Adicionar a estrutura HTML da Seção 1 dentro do `index.html` e estilizar no `style.css`.'\n"
-            "9.  **TAREFA FINAL:** A última subtarefa DEVE ser uma revisão completa do `index.html` e do `style.css` para garantir que toda a lógica e conteúdo estão corretos e coesos, gerando um `README.md` que descreva o projeto final.\n"
+            "2.  **Estrutura das Subtarefas ('subtasks'):** Crie uma lista de subtarefas que reflita um plano lógico e detalhado.\n"
+            "3.  **DEFINIÇÃO DA ARQUITETURA INICIAL:** A primeira subtarefa gerada no plano DEVE ser a criação de um documento de arquitetura chamado 'ARQUITETURA.md'. Este documento deve listar todos os arquivos e diretórios a serem criados no projeto, com uma breve descrição da responsabilidade de cada um. Todas as subtarefas subsequentes devem usar este documento como referência.\n"
+            "4.  **A TAREFA FINAL E OBRIGATÓRIA:** A última subtarefa da lista DEVE ser uma tarefa de revisão completa. O 'responsible_role' para esta tarefa final deve ser um agente com perfil de liderança (ex: 'Arquiteto de Software', 'Gerente de Projeto', 'Editor Chefe').\n"
+            "5.  **Descrição da Tarefa Final:** A descrição desta última tarefa deve instruir o agente a: 'Revisar todos os artefatos gerados anteriormente no workspace. Com base no conteúdo final e real, gere um relatório de resumo completo (ex: README.md, RelatorioFinal.md) que descreva precisamente o projeto e como utilizá-lo ou executá-lo.'\n"
+            "6.  **Nomes de Arquivos Explícitos:** Nas descrições das subtarefas que envolvem criar arquivos ou documentos, mencione o nome do artefato explicitamente entre aspas.\n"
+            "7.  **PENSAMENTO ESTRUTURADO E GRANULARIDADE:** Para garantir que o plano de execução seja detalhado, lógico e acionável, independentemente da tarefa, decomponha o trabalho seguindo esta estrutura de pensamento:\n"
+            "    a. **Divisão por Fases Macroeconômicas:** Primeiro, identifique as fases lógicas e de alto nível do projeto. Quase todos os projetos podem ser divididos em fases como: (1) Pesquisa e Design, (2) Desenvolvimento da Estrutura Base/Esboço, (3) Implementação do Conteúdo/Lógica Principal, (4) Refinamento e Polimento, (5) Validação e Finalização.\n"
+            "    b. **Detalhamento por Componentes Lógicos:** Em seguida, para cada fase, quebre cada entrega principal em seus componentes lógicos internos. O objetivo é que cada subtarefa represente um passo gerenciável, não uma entrega ampla. NÃO crie apenas uma subtarefa por arquivo ou por documento.\n"
+            "        * **Se a tarefa for gerar CÓDIGO (qualquer linguagem):** Em vez de \"Criar o arquivo 'servico_usuario.py'\", detalhe em: \"Definir a classe ou modelo de dados 'Usuario'\", \"Implementar a função 'criar_usuario' com validação de entrada\", \"Implementar a função de busca 'obter_usuario_por_id'\", \"Adicionar tratamento de erros e logging ao serviço\".\n"
+            "        * **Se a tarefa for gerar TEXTO (relatório, roteiro, artigo):** Em vez de \"Escrever o relatório de análise\", detalhe em: \"Elaborar a estrutura de tópicos e o esqueleto do relatório\", \"Redigir a introdução e a declaração do problema\", \"Desenvolver a seção de análise de dados X\", \"Desenvolver a seção de análise de dados Y\", \"Escrever o resumo executivo e as conclusões\", \"Revisar a gramática e a coesão do texto final\".\n"
+            "        * **Se a tarefa for um SISTEMA (infraestrutura, banco de dados):** Em vez de \"Configurar o banco de dados\", detalhe em: \"Projetar o esquema da tabela 'Clientes'\", \"Definir os índices e chaves estrangeiras para otimização\", \"Escrever o script de migração inicial (seed script) com dados de exemplo\".\n"
+            "8.  **TAREFA FINAL:** A última subtarefa DEVE ser uma revisão completa, conforme detalhado na Regra 3 e 4.\n"
             "</regras_de_planejamento_obrigatorias>\n\n"
             
             "Exemplo de Formato de Saída:\n"
@@ -137,7 +142,7 @@ class TaskManager:
             "  4.  **Adicione Critérios de Qualidade:** Inclua pontos sobre o que tornaria o resultado final excelente (ex: código limpo, boa documentação, design responsivo, etc.).\n"
             "  5.  **Mantenha a Intenção Original:** A nova tarefa deve ser uma versão aprimorada da original, não algo completamente diferente.\n"
             "  6.  **Limitações das IAs:** Lembre-se que as IAs podem ter limitações em entender nuances complexas. Use linguagem simples e direta.\n"
-            "  7.  **Tipos de Arquivos:** A IA não tem capacidade de gerar arquivos binários complexos como imagens, vídeos ou sons. Foque em arquivos de texto, código e dados.\n"
+            "  7.  **Tipos de Arquivos:** A IA não tem capacidade de gerar arquivos binários complexos como imagens, vídeos ou sons. Não sugira que sejam feitos esses arquivos, foque em arquivos de texto, código e dados.\n"
             "</tarefa>\n\n"
             "<regras_de_saida>\n"
             "  - Sua resposta deve ser APENAS o texto da nova tarefa reescrita.\n"
@@ -221,6 +226,13 @@ class TaskManager:
             "  1.  **Análise do Erro:** Entenda a causa raiz do 'ERRO DA TENTATIVA ANTERIOR'.\n"
             "  2.  **Identificação das Ações:** Determine quais arquivos precisam ser criados ou modificados para corrigir o erro.\n"
             "  3.  **Criação do Plano de Ação:** Elabore uma sequência de subtarefas que apenas corrija o problema. Não inclua tarefas do plano original que não estão relacionadas ao erro.\n"
+            "  4.  **Responsável:** Atribua cada subtarefa a um agente da equipe que tenha as habilidades necessárias.\n"
+            "  5.  **PENSAMENTO ESTRUTURADO E GRANULARIDADE:** Para garantir que o plano de execução seja detalhado, lógico e acionável, independentemente da tarefa, decomponha o trabalho seguindo esta estrutura de pensamento:\n"
+            "    a. **Divisão por Fases Macroeconômicas:** Primeiro, identifique as fases lógicas e de alto nível do projeto. Quase todos os projetos podem ser divididos em fases como: (1) Pesquisa e Design, (2) Desenvolvimento da Estrutura Base/Esboço, (3) Implementação do Conteúdo/Lógica Principal, (4) Refinamento e Polimento, (5) Validação e Finalização.\n"
+            "    b. **Detalhamento por Componentes Lógicos:** Em seguida, para cada fase, quebre cada entrega principal em seus componentes lógicos internos. O objetivo é que cada subtarefa represente um passo gerenciável, não uma entrega ampla. NÃO crie apenas uma subtarefa por arquivo ou por documento.\n"
+            "        * **Se a tarefa for gerar CÓDIGO (qualquer linguagem):** Em vez de \"Criar o arquivo 'servico_usuario.py'\", detalhe em: \"Definir a classe ou modelo de dados 'Usuario'\", \"Implementar a função 'criar_usuario' com validação de entrada\", \"Implementar a função de busca 'obter_usuario_por_id'\", \"Adicionar tratamento de erros e logging ao serviço\".\n"
+            "        * **Se a tarefa for gerar TEXTO (relatório, roteiro, artigo):** Em vez de \"Escrever o relatório de análise\", detalhe em: \"Elaborar a estrutura de tópicos e o esqueleto do relatório\", \"Redigir a introdução e a declaração do problema\", \"Desenvolver a seção de análise de dados X\", \"Desenvolver a seção de análise de dados Y\", \"Escrever o resumo executivo e as conclusões\", \"Revisar a gramática e a coesão do texto final\".\n"
+            "        * **Se a tarefa for um SISTEMA (infraestrutura, banco de dados):** Em vez de \"Configurar o banco de dados\", detalhe em: \"Projetar o esquema da tabela 'Clientes'\", \"Definir os índices e chaves estrangeiras para otimização\", \"Escrever o script de migração inicial (seed script) com dados de exemplo\".\n"
             "</tarefa>\n\n"
             "<regras_de_saida>\n"
             "  - Sua resposta deve ser **APENAS uma lista JSON** de objetos de subtarefa.\n"

@@ -89,7 +89,7 @@ class Agent:
 
         # Decisão Final com base na pontuação
         # O limiar de 10 foi escolhido empiricamente. Pode ser ajustado.
-        if code_score >= 10:
+        if code_score >= 5:
             return 'code'
         else:
             return 'document'
@@ -188,6 +188,7 @@ class Agent:
             prompt_context = (
                 f"<contexto_da_missao>\n"
                 f"  <objetivo_geral_do_projeto>\n{main_task_description}\n</objetivo_geral_do_projeto>\n\n"
+                f"  Ao analisar o contexto, preste atenção especial ao feedback mais recente ou aos arquivos marcados como críticos."
                 f"  <arquivos_e_feedback_existentes>\n{context_summary}\n</arquivos_e_feedback_existentes>\n"
                 f"</contexto_da_missao>\n\n"
             )
