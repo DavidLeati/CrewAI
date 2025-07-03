@@ -170,10 +170,11 @@ class Agent:
                 f"</instrucoes_de_identidade>\n\n"
                 "<regras_inviolaveis_de_saida>\n"
                 "  - Sua resposta DEVE OBRIGATORIAMENTE ser uma das duas opções:\n"
-                "  1.  **AÇÃO DE PESQUISA:** Se você precisar de mais informações, sua ÚNICA resposta deve ser um bloco de código JSON contendo uma ação de pesquisa. Exemplo:\n"
+                "  1.  **AÇÃO DE PESQUISA:** Se você precisar de mais informações, sua ÚNICA resposta deve ser um bloco de código JSON contendo uma ação de pesquisa, especificamente em PORTUGUES. Exemplo:\n"
                 "      ```json\n"
                 '      {\n        "action": "search",\n        "query": "qual a sintaxe de uma arrow function em JavaScript?"\n      }\n'
                 "      ```\n"
+                "    a. NÃO SIMULE DADOS ou presuma resultados de pesquisa. Apenas solicite uma pesquisa real.\n"
                 "  2.  **CRIAÇÃO DE ARTEFATO:** Se você já tem informações suficientes, sua ÚNICA resposta deve ser o conteúdo do(s) artefato(s) solicitado(s), seguido por seu respectivo bloco de metadados ```json.\n"
                 "  - NUNCA inclua texto introdutório, conversacional ou explicativo como 'Claro, aqui está o código:'. Vá direto ao ponto.\n"
                 "  - Sua resposta DEVE OBRIGATORIAMENTE terminar com um ou mais blocos de metadados ```json, cada um seguindo seu respectivo bloco de conteúdo.\n"
@@ -228,6 +229,7 @@ class Agent:
             prompt_footer = (
                 "<exemplo_de_formato_de_saida>\n"
                 "O caminho do arquivo deve estar presente no suggested_filename.\n"
+                "Sempre que for gerar um arquivo vazio, adicione um comentário nem sinalizando isso.\n"
                 "Lembre-se, sua resposta final deve ser o conteúdo do artefato, seguido imediatamente pelo bloco de metadados. Exemplo para um artefato:\n"
                 "Opção 1 (Pesquisa):\n"
                 "```json\n"

@@ -5,9 +5,8 @@ import logging
 import shutil
 import uuid
 import subprocess
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import re
-
 
 from config import config
 from services import GeminiService
@@ -150,7 +149,7 @@ class TaskManager:
             "</regras_de_saida>"
         )
 
-        response_dict = self.llm_service.generate_text(prompt, temperature=0.3)
+        response_dict = self.llm_service.generate_text(prompt, temperature=0.7)
         rewritten_task = response_dict.get('text', main_task_description).strip()
 
         if rewritten_task and rewritten_task != main_task_description:
@@ -716,142 +715,193 @@ class TaskManager:
 
     def delegate_task(self, main_task_description: str, status_callback=None, uploaded_files_content: dict = None):
         """
-        Orquestra o ciclo completo de execução da tarefa, incluindo o replanejamento
-        estratégico em caso de falhas repetidas e reportando o status para uma UI.
+        Orquestra o ciclo completo de execução da tarefa de forma limpa e legível,
+        delegando a lógica para métodos auxiliares.
         """
-        
-        task_id = uuid.uuid4().hex[:10]
-        task_root_dir = os.path.join(self.output_dir, f"task_{task_id}")
-        os.makedirs(task_root_dir, exist_ok=True)
+        task_id, workspace_dir = self._initialize_task()
         logger.add_log_for_ui(f"\n{'='*20} Nova Tarefa Iniciada: {task_id} {'='*20}")
-        
+
         enhanced_task_description = self._rewrite_task_with_prompt_engineering(main_task_description)
 
         master_plan = self._plan_execution_strategy(enhanced_task_description)
         if not master_plan:
-            logger.add_log_for_ui("Falha crítica no planejamento inicial. Tarefa abortada.", "critical")
             return "Falha crítica no planejamento inicial. Tarefa abortada."
-        
-        logger.add_log_for_ui(f"Plano Mestre criado com sucesso. Crew: '{master_plan.get('crew_name')}'.")
-        
-        crew_name_for_log = master_plan.get('crew_name', "DynamicCrew")
+
+        crew, agents = self._setup_crew(master_plan, task_id)
+
+        is_task_successful, execution_results, feedback_history = self._execution_loop(
+            crew=crew,
+            agents=agents,
+            master_plan=master_plan,
+            task_id=task_id,
+            enhanced_task_description=enhanced_task_description,
+            workspace_dir=workspace_dir,
+            status_callback=status_callback,
+            uploaded_files_content=uploaded_files_content
+        )
+
+        final_message = self._finalize_and_summarize(
+            task_id=task_id,
+            is_task_successful=is_task_successful,
+            enhanced_task_description=enhanced_task_description,
+            workspace_dir=workspace_dir,
+            crew_name=master_plan.get('crew_name', "DynamicCrew"),
+            execution_results=execution_results
+        )
+
+        return final_message
+
+    def _initialize_task(self) -> Tuple[str, str]:
+        """Cria um ID de tarefa, o diretório raiz e o workspace."""
+        task_id = uuid.uuid4().hex[:10]
+        task_root_dir = os.path.join(self.output_dir, f"task_{task_id}")
         workspace_dir = os.path.join(task_root_dir, "workspace")
         os.makedirs(workspace_dir, exist_ok=True)
-        
+        return task_id, workspace_dir
+
+    def _setup_crew(self, master_plan: Dict, task_id: str) -> Tuple[Crew, List[Agent]]:
+        """Cria e configura a equipe (crew) e os agentes com base no plano."""
+        logger.add_log_for_ui(f"Plano Mestre criado. Crew: '{master_plan.get('crew_name')}'.")
         agents = [Agent(agent_id=f"{task_id}_{ag['role']}", llm_service=self.llm_service, **ag) for ag in master_plan['agents']]
         crew = Crew(name=master_plan['crew_name'], description=master_plan['crew_description'], agents=agents)
-        
+        return crew, agents
+
+    def _execution_loop(self, crew: Crew, agents: List[Agent], master_plan: Dict, task_id: str, enhanced_task_description: str, workspace_dir: str, status_callback, uploaded_files_content) -> Tuple[bool, List[Dict], List[str]]:
+        """Executa o ciclo principal de tentativas, correções e validações."""
         feedback_history: List[str] = []
         execution_results: List[Dict] = []
-        is_task_successful = False
         failures_on_same_issue_counter = 0
         last_feedback = ""
-        
+
         for attempt in range(1, config.MAX_ITERATIONS + 1):
             logger.add_log_for_ui(f"--- Iniciando Tentativa de Geração/Correção {attempt}/{config.MAX_ITERATIONS} ---")
 
-            if feedback_history:
-                current_feedback = feedback_history[-1]
-                if current_feedback == last_feedback:
-                    failures_on_same_issue_counter += 1
-                    logger.add_log_for_ui(f"Mesmo erro detectado {failures_on_same_issue_counter} vez(es) consecutivas.", "warning")
-                else:
-                    failures_on_same_issue_counter = 1
-                last_feedback = current_feedback
+            master_plan, crew, agents, feedback_history, failures_on_same_issue_counter, last_feedback = self._handle_replan_if_needed(
+                failures_on_same_issue_counter=failures_on_same_issue_counter,
+                last_feedback=last_feedback,
+                feedback_history=feedback_history,
+                enhanced_task_description=enhanced_task_description,
+                master_plan=master_plan,
+                task_id=task_id,
+                agents=agents,
+                crew=crew
+            )
 
-            if failures_on_same_issue_counter > 2:
-                logger.add_log_for_ui("Falhas repetidas detectadas. Acionando replanejamento estratégico completo.", "critical")
-                new_plan = self._re_strategize_plan(enhanced_task_description, feedback_history)
-                if new_plan:
-                    master_plan = new_plan
-                    agents = [Agent(agent_id=f"{task_id}_{ag['role']}", llm_service=self.llm_service, **ag) for ag in master_plan['agents']]
-                    crew = Crew(name=master_plan['crew_name'], description=master_plan['crew_description'], agents=agents)
-                    logger.add_log_for_ui("PLANO MESTRE REVISADO E CREW RECONFIGURADA DEVIDO A FALHAS PERSISTENTES.", "warning")
-                    failures_on_same_issue_counter = 0
-                    feedback_history = []  # A história é limpa aqui, causando o erro na próxima iteração
-                    last_feedback = ""
-                else:
-                    logger.add_log_for_ui("O replanejamento estratégico falhou. Continuando com o plano antigo.", "error")
+            subtasks_for_this_attempt = self._get_subtasks_for_current_attempt(
+                attempt=attempt,
+                failures_on_same_issue_counter=failures_on_same_issue_counter,
+                feedback_history=feedback_history,
+                enhanced_task_description=enhanced_task_description,
+                master_plan=master_plan
+            )
 
-            subtasks_for_this_attempt = master_plan['subtasks']
-            
-            if attempt > 1 and not (failures_on_same_issue_counter > 2) and feedback_history:
-                feedback = feedback_history[-1]
-                corrective_subtasks = self._generate_corrective_subtasks(enhanced_task_description, master_plan, feedback)
-                if corrective_subtasks:
-                    logger.add_log_for_ui("Plano de ação corretivo gerado para focar no erro.")
-                    subtasks_for_this_attempt = corrective_subtasks
-                else:
-                    logger.add_log_for_ui("Não foi possível gerar um plano de ação corretivo. Usando o plano mestre novamente.", "error")
-            
-            # Passando o callback para a crew, para que ela também possa reportar o status
             crew_result = crew.process_subtasks(
-                enhanced_task_description, 
-                subtasks_for_this_attempt, 
-                workspace_dir, 
-                attempt, 
+                enhanced_task_description,
+                subtasks_for_this_attempt,
+                workspace_dir,
+                attempt,
                 feedback_history,
                 status_callback=status_callback,
                 uploaded_files_content=uploaded_files_content
             )
             execution_results.append(crew_result)
-            
+
             if crew_result.get("status") == "ERRO":
-                logger.add_log_for_ui(f"Crew falhou criticamente na tentativa {attempt}: {crew_result.get('message')}", "critical")
+                logger.add_log_for_ui(f"Crew falhou criticamente: {crew_result.get('message')}", "critical")
                 feedback_history.append(crew_result.get("message", "Erro crítico na crew."))
                 continue
 
-            all_artifacts = [{"file_path": os.path.join(root, name)} for root, _, files in os.walk(workspace_dir) for name in files]
+            validation_passed, feedback = self._run_validation_pipeline(workspace_dir, master_plan['subtasks'])
+            if not validation_passed:
+                feedback_history.append(feedback)
+                continue
+
+            logger.add_log_for_ui("SUCESSO! Todas as etapas de validação passaram.")
+            return True, execution_results, feedback_history # Tarefa bem-sucedida
+
+        logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
+        return False, execution_results, feedback_history # Tarefa falhou
+
+    def _run_validation_pipeline(self, workspace_dir: str, original_subtasks: List[Dict]) -> Tuple[bool, str]:
+        """Executa a sequência de validações e retorna o status e o feedback."""
+        all_artifacts = [{"file_path": os.path.join(root, name)} for root, _, files in os.walk(workspace_dir) for name in files]
+
+        validations = [
+            ("Auditoria de Arquivos", self._reconcile_plan_with_artifacts, (original_subtasks, workspace_dir)),
+            ("Validação de Estrutura", self._validate_file_structure, (all_artifacts,)),
+            ("Prova Prática (Execução)", self._execute_run_test, (workspace_dir, all_artifacts)),
+            ("Auditoria de Completude de Código", self._perform_code_completeness_review, (workspace_dir, all_artifacts, original_subtasks))
+        ]
+
+        for name, func, args in validations:
+            logger.add_log_for_ui(f"VALIDAÇÃO: Iniciando {name}...")
+            result = func(*args)
             
-            # --- Hierarquia de Validação com logging para a UI ---
-            logger.add_log_for_ui("VALIDAÇÃO: Iniciando auditoria de arquivos...")
-            reconciliation_result = self._reconcile_plan_with_artifacts(master_plan['subtasks'], workspace_dir)
-            if not reconciliation_result["success"]:
-                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Auditoria de Arquivos): {reconciliation_result['feedback']}", "warning")
-                feedback_history.append(reconciliation_result["feedback"])
-                continue
-
-            logger.add_log_for_ui("VALIDAÇÃO: Iniciando validação de estrutura...")
-            structure_validation_result = self._validate_file_structure(all_artifacts)
-            if not structure_validation_result["success"]:
-                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Estrutura de Arquivo): {structure_validation_result['feedback']}", "warning")
-                feedback_history.append(structure_validation_result["feedback"])
-                continue
-
-            logger.add_log_for_ui("VALIDAÇÃO: Iniciando prova prática (teste de execução)...")
-            run_test_result = self._execute_run_test(workspace_dir, all_artifacts)
-            if not run_test_result["success"]:
-                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Prova Prática): {run_test_result['output']}", "warning")
-                feedback_history.append(f"VALIDAÇÃO FALHOU (Prova Prática):\n{run_test_result['output']}")
-                continue
-
-            logger.add_log_for_ui("VALIDAÇÃO: Iniciando auditoria de completude de código...")
-            review_result = self._perform_code_completeness_review(workspace_dir, all_artifacts, master_plan['subtasks'])
-            if not review_result["is_complete"]:
-                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU (Auditoria de Código): {review_result['feedback']}", "warning")
-                feedback_history.append(review_result["feedback"])
-                continue
+            # Adapta a verificação para diferentes estruturas de retorno
+            is_successful = result.get("success", result.get("is_complete", False))
             
-            logger.add_log_for_ui("SUCESSO! Todas as etapas de validação passaram nesta tentativa.")
-            is_task_successful = True
-            break
+            if not is_successful:
+                feedback = result.get("feedback", result.get("output", "Erro de validação não especificado."))
+                logger.add_log_for_ui(f"VALIDAÇÃO FALHOU ({name}): {feedback}", "warning")
+                return False, feedback
+
+        return True, "Todas as validações foram bem-sucedidas."
         
-        # --- Finalização ---
-        final_output_dir, final_status = None, "FALHA"
+    def _finalize_and_summarize(self, task_id: str, is_task_successful: bool, enhanced_task_description: str, workspace_dir: str, crew_name: str, execution_results: List[Dict]) -> str:
+        """Finaliza a tarefa, cria a saída e gera o resumo."""
+        final_output_dir = None
+        final_status = "FALHA"
+
         if is_task_successful:
             final_status = "SUCESSO"
-            logger.add_log_for_ui("Tarefa concluída com sucesso. Iniciando processo de curadoria final...")
-            final_output_dir = self._finalize_task(task_id, enhanced_task_description, workspace_dir, crew_name_for_log)
-        else:
-            logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
-        
+            logger.add_log_for_ui("Tarefa concluída. Iniciando processo de curadoria final...")
+            final_output_dir = self._finalize_task(task_id, enhanced_task_description, workspace_dir, crew_name)
+
         self._create_summary_add_log_for_ui(task_id, enhanced_task_description, execution_results, final_status, final_output_dir)
-        
+
         final_message = f"Execução da tarefa {task_id} finalizada com status: {final_status}."
         final_message += f"\nResumo salvo em: {os.path.join(self.output_dir, f'task_{task_id}_summary_log.md')}"
         if final_output_dir:
             final_message += f"\nSaída final CURADA e organizada em: {final_output_dir}"
         else:
             final_message += "\nNenhum entregável final foi produzido."
-            
+        
         return final_message
+
+    def _handle_replan_if_needed(self, failures_on_same_issue_counter, last_feedback, feedback_history, enhanced_task_description, master_plan, task_id, agents, crew):
+        """Verifica se um replanejamento é necessário e o executa."""
+        if feedback_history:
+            if feedback_history[-1] == last_feedback:
+                failures_on_same_issue_counter += 1
+                logger.add_log_for_ui(f"Mesmo erro detectado {failures_on_same_issue_counter} vez(es).", "warning")
+            else:
+                failures_on_same_issue_counter = 1
+            last_feedback = feedback_history[-1]
+
+        if failures_on_same_issue_counter > 2:
+            logger.add_log_for_ui("Falhas repetidas detectadas. Acionando replanejamento estratégico.", "critical")
+            new_plan = self._re_strategize_plan(enhanced_task_description, feedback_history)
+            if new_plan:
+                master_plan = new_plan
+                crew, agents = self._setup_crew(master_plan, task_id)
+                logger.add_log_for_ui("PLANO MESTRE REVISADO E CREW RECONFIGURADA.", "warning")
+                failures_on_same_issue_counter = 0
+                feedback_history.clear()
+                last_feedback = ""
+            else:
+                logger.add_log_for_ui("Replanejamento estratégico falhou. Continuando com o plano antigo.", "error")
+        
+        return master_plan, crew, agents, feedback_history, failures_on_same_issue_counter, last_feedback
+
+    def _get_subtasks_for_current_attempt(self, attempt, failures_on_same_issue_counter, feedback_history, enhanced_task_description, master_plan):
+        """Determina quais subtarefas devem ser executadas nesta tentativa (plano original ou corretivo)."""
+        if attempt > 1 and not (failures_on_same_issue_counter > 2) and feedback_history:
+            feedback = feedback_history[-1]
+            corrective_subtasks = self._generate_corrective_subtasks(enhanced_task_description, master_plan, feedback)
+            if corrective_subtasks:
+                logger.add_log_for_ui("Plano de ação corretivo gerado para focar no erro.")
+                return corrective_subtasks
+            else:
+                logger.add_log_for_ui("Não foi possível gerar plano corretivo. Usando o plano mestre.", "error")
+        
+        return master_plan['subtasks']

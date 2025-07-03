@@ -5,17 +5,17 @@ import logging
 from typing import Dict, Any, List
 import os
 import json
-import time
 from datetime import datetime
 import random
 
 from config import config
 from app_logger import logger
-from search_util import LLMSearchSystem
+# Importa a sua nova função de busca diretamente
+from search_util import search_startpage
 
 class GeminiService:
-    """Serviço para interagir com a API do Gemini, gerenciando chamadas e configurações."""
-    def __init__(self, model_name: str, fallback_model_name: str, search_system: LLMSearchSystem, chaos_mode: bool = False):
+    """Serviço para interagir com a API do Gemini e o sistema de busca web."""
+    def __init__(self, model_name: str, fallback_model_name: str, chaos_mode: bool = False):
         self.model_name = model_name
         self.fallback_model_name = fallback_model_name
         self.chaos_mode = chaos_mode
@@ -32,11 +32,8 @@ class GeminiService:
             self.model = genai.GenerativeModel(self.model_name)
             self.model_for_json = self.model
 
-        self.search_service = search_system
-        logger.add_log_for_ui("Serviço de busca local (LLMSearchSystem) integrado ao GeminiService.")
-
     def generate_text(self, prompt: str, temperature: float, is_json_output: bool = False) -> Dict[str, Any]:
-        """Gera texto e retorna um dicionário com o texto e o motivo da finalização, salvando o resultado em disco."""
+        """Gera texto e retorna um dicionário com o texto e o motivo da finalização."""
         if self.chaos_mode and random.random() < 0.1: # 10% de chance de falha
             chaos_type = random.choice(['api_error', 'bad_json', 'empty_response'])
             logger.add_log_for_ui(f"CHAOS MODE: Injetando erro do tipo '{chaos_type}'", "warning")
@@ -46,8 +43,8 @@ class GeminiService:
             if chaos_type == 'bad_json':
                 return {"text": '{"key": "value",,, "bad_syntax"}', "finish_reason": "STOP"} # JSON inválido
             if chaos_type == 'empty_response':
-                return {"text": "", "finish_reason": "EMPTY"}       
-       
+                return {"text": "", "finish_reason": "EMPTY"}
+        
         current_model = self.model_for_json if is_json_output else self.model
         for attempt in range(config.MAX_RETRIES_API + 1):
             try:
@@ -70,9 +67,8 @@ class GeminiService:
                 if is_json_output:
                     text_output = text_output.strip().removeprefix("```json").removesuffix("```").strip()
 
-                # Salvar o conteúdo gerado
-                self._save_input_to_file(prompt)
-                self._save_output_to_file(text_output, is_json_output)
+                self._save_log_to_file(prompt, "input")
+                self._save_log_to_file(text_output, f"response_{'json' if is_json_output else 'txt'}")
 
                 return {"text": text_output, "finish_reason": finish_reason}
 
@@ -92,64 +88,32 @@ class GeminiService:
 
     def perform_web_search(self, query: str) -> List[Dict[str, str]]:
         """
-        Realiza uma pesquisa utilizando o LLMSearchSystem local
-        e retorna uma lista de resultados formatados.
+        Realiza uma pesquisa na web usando o scraper do Startpage.
         """
-        print(f"DEBUG: Tipo de self.search_service é: {type(self.search_service)}")
-        print(f"DEBUG: Valor de self.search_service é: {self.search_service}")
-
-        logger.add_log_for_ui(f"Iniciando pesquisa local para a query: '{query}'")
+        logger.add_log_for_ui(f"Iniciando busca na web (via Startpage) para: '{query}'")
         try:
-            # O novo sistema retorna os resultados em uma string JSON estruturada
-            search_results_json = self.search_service.llm_search_interface(query)
-            search_data = json.loads(search_results_json)
-            
-            # A chave 'results' contém a lista de dicionários que precisamos
-            results_list = search_data.get("results", [])
+            # Chama diretamente a sua função de busca do search_util.py
+            results_list = search_startpage(query=query, num_results=5)
 
             if results_list:
-                logger.add_log_for_ui(f"Pesquisa local para '{query}' concluída. Encontrados {len(results_list)} resultados.")
+                logger.add_log_for_ui(f"Busca para '{query}' encontrou {len(results_list)} resultados com conteúdo.")
             else:
-                logging.warning(f"Nenhum resultado de pesquisa local encontrado para '{query}'.")
+                logging.warning(f"Nenhum resultado encontrado ou extraído para '{query}'.")
             
-            # O formato já é o esperado ('title', 'url', 'snippet'), então retornamos diretamente
+            # A função já retorna a lista de dicionários no formato correto
             return results_list
 
         except Exception as e:
-            logging.error(f"Erro inesperado ao invocar o serviço de pesquisa local para '{query}': {e}", exc_info=True)
+            logging.error(f"Erro inesperado ao invocar a função de busca: {e}", exc_info=True)
             return []
 
-    def _save_output_to_file(self, content: str, is_json: bool):
+    def _save_log_to_file(self, content: str, log_type: str):
         """Salva o conteúdo em um arquivo com timestamp na pasta 'log'."""
         os.makedirs("log", exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        extension = "json" if is_json else "txt"
-        filepath = os.path.join("log", f"{timestamp}_response.{extension}")
-        
-        try:
-            with open(filepath, "w", encoding="utf-8") as f:
-                if is_json:
-                    try:
-                        parsed = json.loads(content)
-                        json.dump(parsed, f, indent=2, ensure_ascii=False)
-                    except json.JSONDecodeError:
-                        f.write(content)  # salva como string se JSON inválido
-                else:
-                    f.write(content)
-            logging.info(f"Conteúdo salvo em {filepath}")
-        except Exception as e:
-            logging.error(f"Erro ao salvar o conteúdo em arquivo: {e}")
-    
-    def _save_input_to_file(self, content: str):
-        """Salva o conteúdo em um arquivo com timestamp na pasta 'log'."""
-        os.makedirs("log", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        extension = "txt"
-        filepath = os.path.join("log", f"{timestamp}_input.{extension}")
-        
+        filepath = os.path.join("log", f"{timestamp}_{log_type}.log")
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write(content)
-            logging.info(f"Conteúdo salvo em {filepath}")
         except Exception as e:
-            logging.error(f"Erro ao salvar o conteúdo em arquivo: {e}")
+            logging.error(f"Erro ao salvar o log em arquivo: {e}")
