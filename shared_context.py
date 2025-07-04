@@ -40,23 +40,31 @@ class SharedContext:
 
     def rescan_and_update_context(self, workspace_dir: str):
         """
-        Varre o diretório de trabalho, lê todos os arquivos e atualiza
-        a memória de arquivos da sessão com o estado mais recente.
+        Varre o diretório de trabalho, lê todos os arquivos de texto e atualiza
+        a memória de arquivos da sessão com o estado mais recente, ignorando caches.
         """
         logger.add_log_for_ui("Sincronizando contexto: Re-escaneando o diretório de trabalho...")
         updated_files = 0
-        for root, _, files in os.walk(workspace_dir):
+        for root, dirs, files in os.walk(workspace_dir):
+            # Ignora explicitamente o diretório __pycache__
+            if '__pycache__' in dirs:
+                dirs.remove('__pycache__')
+            
             for file in files:
+                # Ignora arquivos .pyc
+                if file.endswith('.pyc'):
+                    continue
+                    
                 try:
                     file_path = os.path.join(root, file)
                     relative_path = os.path.relpath(file_path, workspace_dir)
                     with open(file_path, 'r', encoding='utf-8') as f:
                         content = f.read()
-                        # Atualiza ou adiciona o arquivo no contexto
+                        # Atualiza ou adiciona o arquivo no contexto se houver mudança
                         if self._file_context.get(relative_path) != content:
                             self._file_context[relative_path] = content
                             updated_files += 1
-                except Exception as e:
+                except (UnicodeDecodeError, IOError) as e:
                     logger.add_log_for_ui(f"Aviso ao re-escanear: Não foi possível ler o arquivo '{file}': {e}", "warning")
         
         if updated_files > 0:

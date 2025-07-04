@@ -356,7 +356,7 @@ class Crew:
         Prioriza arquivos mencionados na tarefa e arquivos de contexto essenciais.
         """
         # Palavras-chave para identificar arquivos de contexto essenciais
-        CORE_CONTEXT_KEYWORDS = ['arquitetura', 'architecture', 'design', 'concept', 'documento_conceito']
+        CORE_CONTEXT_KEYWORDS = ['arquitetura', 'architecture', 'design', 'concept', 'documento_conceito', 'report']
         
         # 1. Encontra arquivos mencionados explicitamente na tarefa
         explicit_filenames = set(re.findall(r"['\"`]([\w\.\/\\]+?)['\"`]", task_description))

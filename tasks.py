@@ -7,6 +7,7 @@ import uuid
 import subprocess
 from typing import List, Dict, Any, Optional, Tuple
 import re
+import ast
 
 from config import config
 from services import GeminiService
@@ -240,7 +241,7 @@ class TaskManager:
                 orphaned_files.add(file_to_check)
 
         if not orphaned_files:
-            logger.add_log_for_ui("✅ Validação de Integração de Código bem-sucedida.")
+            logger.add_log_for_ui("Validação de Integração de Código bem-sucedida.")
             return {"success": True}
         else:
             feedback = (f"FALHA DE INTEGRAÇÃO: Os seguintes arquivos foram criados mas não parecem estar sendo importados ou referenciados: {list(orphaned_files)}. "
@@ -349,30 +350,33 @@ class TaskManager:
         agent_roles = [ag['role'] for ag in original_plan.get('agents', [])]
 
         prompt = (
-            "<identidade>Você é um Gerente de Projetos Sênior, especialista em recuperação de falhas. Sua função é criar um plano de ação cirúrgico para consertar um erro, evitando retrabalho.</identidade>\n\n"
+            "<identidade>Você é um Gerente de Projetos Sênior, especialista em recuperação de falhas. Sua missão é criar um plano de ação enxuto e inteligente para consertar um erro, evitando retrabalho.</identidade>\n\n"
             "<contexto>\n"
             f"  - OBJETIVO GERAL DO PROJETO: {main_task_description}\n"
             f"  - AGENTES DISPONÍVEIS NA EQUIPE: {agent_roles}\n"
-            f"  - ERRO DA TENTATIVA ANTERIOR: {feedback}\n"
-            f"  - PLANO ORIGINAL COMPLETO (para referência): \n{original_subtasks_str}\n"
+            f"  - FEEDBACK DA FALHA ANTERIOR: {feedback}\n"
             "</contexto>\n\n"
             "<tarefa>\n"
-            "  Sua missão é criar uma **lista de subtarefas nova, curta e focada** que resolva o erro reportado.\n"
+            "  Sua missão é criar uma **lista de subtarefas NOVA, CURTA e ESTRATÉGICA** que resolva a causa raiz do erro reportado.\n"
             "  **Passos Mentais a Seguir:**\n"
-            "  1.  **Análise do Erro:** Entenda a causa raiz do 'ERRO DA TENTATIVA ANTERIOR'.\n"
-            "  2.  **Identificação das Ações:** Determine quais arquivos precisam ser criados ou modificados para corrigir o erro.\n"
-            "  3.  **Criação do Plano de Ação:** Elabore uma sequência de subtarefas que apenas corrija o problema. Não inclua tarefas do plano original que não estão relacionadas ao erro.\n"
-            "  4.  **Responsável:** Atribua cada subtarefa a um agente da equipe que tenha as habilidades necessárias.\n"
-            "  5.  **PENSAMENTO ESTRUTURADO E GRANULARIDADE:** Para garantir que o plano de execução seja detalhado, lógico e acionável, independentemente da tarefa, decomponha o trabalho seguindo esta estrutura de pensamento:\n"
-            "    a. **Divisão por Fases Macroeconômicas:** Primeiro, identifique as fases lógicas e de alto nível do projeto. Quase todos os projetos podem ser divididos em fases como: (1) Pesquisa e Design, (2) Desenvolvimento da Estrutura Base/Esboço, (3) Implementação do Conteúdo/Lógica Principal, (4) Refinamento e Polimento, (5) Validação e Finalização.\n"
-            "    b. **Detalhamento por Componentes Lógicos:** Em seguida, para cada fase, quebre cada entrega principal em seus componentes lógicos internos. O objetivo é que cada subtarefa represente um passo gerenciável, não uma entrega ampla. NÃO crie apenas uma subtarefa por arquivo ou por documento.\n"
-            "        * **Se a tarefa for gerar CÓDIGO (qualquer linguagem):** Em vez de \"Criar o arquivo 'servico_usuario.py'\", detalhe em: \"Definir a classe ou modelo de dados 'Usuario'\", \"Implementar a função 'criar_usuario' com validação de entrada\", \"Implementar a função de busca 'obter_usuario_por_id'\", \"Adicionar tratamento de erros e logging ao serviço\".\n"
-            "        * **Se a tarefa for gerar TEXTO (relatório, roteiro, artigo):** Em vez de \"Escrever o relatório de análise\", detalhe em: \"Elaborar a estrutura de tópicos e o esqueleto do relatório\", \"Redigir a introdução e a declaração do problema\", \"Desenvolver a seção de análise de dados X\", \"Desenvolver a seção de análise de dados Y\", \"Escrever o resumo executivo e as conclusões\", \"Revisar a gramática e a coesão do texto final\".\n"
-            "        * **Se a tarefa for um SISTEMA (infraestrutura, banco de dados):** Em vez de \"Configurar o banco de dados\", detalhe em: \"Projetar o esquema da tabela 'Clientes'\", \"Definir os índices e chaves estrangeiras para otimização\", \"Escrever o script de migração inicial (seed script) com dados de exemplo\".\n"
+            "  1.  **Análise do Erro:** Entenda o problema principal descrito no 'FEEDBACK'. (Ex: 'código incompleto', 'falha de integração', 'erro de execução').\n"
+            "  2.  **Consolidação:** Em vez de criar uma tarefa para cada pequeno detalhe, **AGRUPE correções relacionadas** em subtarefas abrangentes. O objetivo é a eficiência.\n"
+            "  3.  **Criação do Plano de Ação:** Elabore uma sequência de 1 a 3 subtarefas que resolva o problema de forma definitiva.\n"
             "</tarefa>\n\n"
             "<regras_de_saida>\n"
             "  - Sua resposta deve ser **APENAS uma lista JSON** de objetos de subtarefa.\n"
-            "  - Cada objeto deve ter as chaves 'description' e 'responsible_role'.\n"
+            "  - Cada objeto deve ter 'description' e 'responsible_role'.\n"
+            "  - Exemplo para um feedback sobre 'placeholders de integração em game.js':\n"
+            "    [\n"
+            "      {\n"
+            '        "description": "Revisar o feedback sobre placeholders e refatorar o arquivo `js/game.js` para integrar completamente todos os módulos necessários (map, inventory, ui, etc.), removendo todos os comentários de lógica incompleta e ativando as funcionalidades.",\n'
+            '        "responsible_role": "Desenvolvedor de Jogo Web"\n'
+            "      },\n"
+            "      {\n"
+            '        "description": "Após a refatoração do `game.js`, revisar o arquivo `js/modules/events.js` e implementar a lógica real para os efeitos dos eventos, garantindo que eles modifiquem o estado do jogo corretamente.",\n'
+            '        "responsible_role": "Desenvolvedor de Jogo Web"\n'
+            "      }\n"
+            "    ]\n"
             "  - NÃO inclua a palavra 'json' ou as cercas ```. Sua resposta deve começar com '[' e terminar com ']'.\n"
             "</regras_de_saida>"
         )
@@ -491,7 +495,7 @@ class TaskManager:
         if not match:
             logging.warning("Comando de execução não encontrado no README.md. Pulando teste."); return {"success": True}
         
-        command = "python -m " + match.group(1).strip()
+        command = match.group(1).strip()
         logger.add_log_for_ui(f"Comando encontrado no README: '{command}'")
 
         try:
@@ -538,7 +542,6 @@ class TaskManager:
             except Exception as e:
                 continue
             
-            # --- NOVO PROMPT CONSCIENTE DA ARQUITETURA ---
             prompt = (
                 "<identidade>Você é um Revisor de Código Sênior (Tech Lead) extremamente rigoroso. Sua missão é garantir que o código esteja funcionalmente completo e cumpra seu papel na arquitetura do projeto.</identidade>\n\n"
                 "<contexto_do_projeto>\n"
@@ -570,7 +573,7 @@ class TaskManager:
             consolidated_feedback = "FALHA DE AUDITORIA DE CÓDIGO:\n" + "\n".join(incomplete_files_feedback)
             return {"is_complete": False, "feedback": consolidated_feedback}
         else:
-            logger.add_log_for_ui("✅ Auditoria de Completude de Código (com Contexto) bem-sucedida.")
+            logger.add_log_for_ui("Auditoria de Completude de Código (com Contexto) bem-sucedida.")
             return {"is_complete": True}
 
     def _perform_backtest_and_validate(self,
@@ -881,35 +884,52 @@ class TaskManager:
 
     # --- MÉTODOS DE APOIO ---
     def _load_project_files(self, workspace_dir: str) -> Dict[str, str]:
-        """Lê o conteúdo de todos os arquivos em um diretório e retorna um dicionário."""
+        """Lê o conteúdo de todos os arquivos de texto em um diretório, ignorando caches."""
         project_files = {}
-        for root, _, files in os.walk(workspace_dir):
+        for root, dirs, files in os.walk(workspace_dir):
+            # Ignora o diretório __pycache__ na própria iteração
+            if '__pycache__' in dirs:
+                dirs.remove('__pycache__')
+            
             for file in files:
+                # Ignora arquivos .pyc
+                if file.endswith('.pyc'):
+                    continue
                 try:
-                    relative_path = os.path.relpath(os.path.join(root, file), workspace_dir)
-                    with open(os.path.join(root, file), 'r', encoding='utf-8') as f:
+                    file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(file_path, workspace_dir)
+                    with open(file_path, 'r', encoding='utf-8') as f:
                         project_files[relative_path] = f.read()
-                except Exception as e:
-                    logger.add_log_for_ui(f"Aviso: Não foi possível ler o arquivo '{file}': {e}", "warning")
+                except (UnicodeDecodeError, IOError) as e:
+                    logger.add_log_for_ui(f"Aviso ao carregar: Não foi possível ler o arquivo '{file}': {e}", "warning")
         return project_files
 
     def _initialize_task(self, project_name: str, existing_project_dir: Optional[str] = None) -> Tuple[str, str]:
-        """Cria a estrutura de diretórios para a tarefa."""
+        """Cria a estrutura de diretórios para a tarefa, copiando um projeto existente corretamente."""
         task_id = uuid.uuid4().hex[:10]
-        # O diretório da tarefa agora inclui o nome do projeto para melhor organização interna
         task_root_dir = os.path.join(self.output_dir, f"{project_name}_{task_id}")
         workspace_dir = os.path.join(task_root_dir, "workspace")
         os.makedirs(workspace_dir, exist_ok=True)
 
         if existing_project_dir:
-            source_dir = os.path.join(self.output_dir, existing_project_dir)
-            if os.path.isdir(source_dir):
-                logger.add_log_for_ui(f"Copiando arquivos de '{source_dir}' para o novo workspace.")
+            # Aponta para a pasta 'workspace' DENTRO do projeto selecionado
+            source_workspace = os.path.join(self.output_dir, existing_project_dir, "workspace")
+            
+            if os.path.isdir(source_workspace):
+                logger.add_log_for_ui(f"Copiando conteúdo de '{source_workspace}' para o novo workspace...")
                 try:
-                    shutil.copytree(source_dir, workspace_dir, dirs_exist_ok=True)
+                    # Itera sobre o conteúdo do DIRETÓRIO DE TRABALHO de origem
+                    for item in os.listdir(source_workspace):
+                        source_item_path = os.path.join(source_workspace, item)
+                        destination_item_path = os.path.join(workspace_dir, item)
+                        
+                        if os.path.isdir(source_item_path):
+                            shutil.copytree(source_item_path, destination_item_path, dirs_exist_ok=True)
+                        else:
+                            shutil.copy2(source_item_path, destination_item_path)
                 except Exception as e:
                     logger.add_log_for_ui(f"Erro ao copiar projeto existente: {e}", "error")
-
+        
         return task_id, workspace_dir
     
     def _finalize_and_summarize(self, task_id: str, project_name: str, is_task_successful: bool, enhanced_task_description: str, workspace_dir: str, execution_results: List[Dict]) -> str:
@@ -986,16 +1006,104 @@ class TaskManager:
         logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
         return False, execution_results, feedback_history
 
+    def _map_dependencies(self, workspace_dir: str) -> Dict[str, Dict]:
+        """
+        Mapeia todas as definições e dependências de símbolos em arquivos Python
+        usando a árvore de sintaxe abstrata (AST).
+        """
+        dependencies = {}
+        py_files = [os.path.join(r, f) for r, d, fs in os.walk(workspace_dir) for f in fs if f.endswith('.py')]
+
+        for file_path in py_files:
+            relative_path = os.path.relpath(file_path, workspace_dir)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    tree = ast.parse(f.read())
+                    for node in ast.walk(tree):
+                        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                            symbol_name = node.name
+                            if symbol_name not in dependencies:
+                                dependencies[symbol_name] = {'defined_in': relative_path, 'depends_on': set()}
+                            for sub_node in ast.walk(node):
+                                if isinstance(sub_node, ast.Name) and isinstance(sub_node.ctx, ast.Load):
+                                    dependencies[symbol_name]['depends_on'].add(sub_node.id)
+                        elif isinstance(node, ast.Assign):
+                            for target in node.targets:
+                                if isinstance(target, ast.Name):
+                                    var_name = target.id
+                                    if var_name not in dependencies:
+                                        dependencies[var_name] = {'defined_in': relative_path, 'depends_on': set()}
+                                    if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
+                                        dependencies[var_name]['depends_on'].add(node.value.func.id)
+            except Exception as e:
+                logger.add_log_for_ui(f"Erro ao mapear dependências em '{relative_path}': {e}", "warning")
+        
+        return dependencies
+
+    def _detect_cycles(self, dependencies: Dict[str, Dict]) -> Optional[str]:
+        """
+        Detecta ciclos em um grafo de dependências usando busca em profundidade.
+        Retorna uma string de feedback se um ciclo for encontrado, senão None.
+        """
+        for start_node, data in dependencies.items():
+            path = [start_node]
+            q = list(data['depends_on'])
+            
+            visited_in_path = {start_node}
+            
+            while q:
+                current_node = q.pop(0)
+                
+                if current_node in visited_in_path:
+                    path.append(current_node)
+                    cycle_str = " -> ".join(path)
+                    feedback = (f"FALHA DE LÓGICA: Detectada uma dependência circular/recursiva: {cycle_str}. "
+                                f"Isso provavelmente causará um loop infinito. O problema origina-se em '{data['defined_in']}'. "
+                                "A próxima iteração deve focar em quebrar este ciclo.")
+                    logging.error(feedback)
+                    return feedback
+                
+                visited_in_path.add(current_node)
+                path.append(current_node)
+                
+                if current_node in dependencies:
+                    q.extend(dependencies[current_node]['depends_on'])
+                
+                # Para evitar loops infinitos na própria análise, limitamos a profundidade da busca
+                if len(path) > len(dependencies) * 2: break
+                
+                # Backtrack
+                path.pop()
+                visited_in_path.remove(current_node)
+
+        return None
+
+    def _validate_code_logic_patterns(self, workspace_dir: str) -> Dict[str, Any]:
+        """
+        Orquestra a análise de código: mapeia dependências e depois detecta ciclos.
+        """
+        logger.add_log_for_ui("--- Iniciando Análise de Lógica de Código (Programática) ---")
+        
+        dependencies = self._map_dependencies(workspace_dir)
+        cycle_feedback = self._detect_cycles(dependencies)
+        
+        if cycle_feedback:
+            return {"success": False, "feedback": cycle_feedback}
+            
+        logger.add_log_for_ui("Análise de Lógica de Código (Programática) bem-sucedida.")
+        return {"success": True}
+    
     def _run_validation_pipeline(self, workspace_dir: str, original_subtasks: List[Dict]) -> Tuple[bool, str]:
-        """Executa a sequência de validações, agora incluindo a verificação de integração."""
+        """Executa a sequência de validações, agora com a análise de lógica programática."""
         all_artifacts = [{"file_path": os.path.join(root, name)} for root, _, files in os.walk(workspace_dir) for name in files]
 
         validations = [
             ("Auditoria de Arquivos", self._reconcile_plan_with_artifacts, (original_subtasks, workspace_dir)),
             ("Validação de Estrutura", self._validate_file_structure, (all_artifacts,)),
-            ("Validação de Integração de Código", self._validate_code_integration, (workspace_dir,)),
-            ("Prova Prática (Execução)", self._execute_run_test, (workspace_dir, all_artifacts)),
-            ("Auditoria de Completude de Código", self._perform_code_completeness_review, (workspace_dir, all_artifacts, original_subtasks))
+            ("Validação de Integração", self._validate_code_integration, (workspace_dir,)),
+            ("Análise de Lógica de Código", self._validate_code_logic_patterns, (workspace_dir,)),
+            ("Auditoria de Completude", self._perform_code_completeness_review, (workspace_dir, all_artifacts, original_subtasks)),
+            ("Prova Prática (Execução)", self._execute_run_test, (workspace_dir, all_artifacts))
         ]
 
         for name, func, args in validations:
