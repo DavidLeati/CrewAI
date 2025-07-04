@@ -3,7 +3,6 @@ Flask
 requests
 beautifulsoup4
 fpdf2
-chromadb
 selenium
 webdriver-manager
 newspaper3k
@@ -11,3 +10,4 @@ cloudscraper
 patch
 lxml
 lxml[html_clean]
+pandas

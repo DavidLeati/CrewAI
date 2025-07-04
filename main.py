@@ -7,6 +7,7 @@ from threading import Thread, Lock
 import time
 import pandas as pd
 from werkzeug.utils import secure_filename
+import shutil
 
 from app_logger import logger
 from config import config, setup_logging
@@ -32,6 +33,20 @@ app = Flask(__name__)
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
 
+# --- Lógica para Listar Projetos Existentes ---
+def get_existing_projects():
+    """Escaneia o diretório de resultados e retorna uma lista de todos os diretórios de projetos."""
+    if not os.path.exists(config.OUTPUT_ROOT_DIR):
+        return []
+    
+    projects = []
+    for item in os.listdir(config.OUTPUT_ROOT_DIR):
+        # A nova lógica agora lista QUALQUER diretório dentro da pasta de resultados.
+        if os.path.isdir(os.path.join(config.OUTPUT_ROOT_DIR, item)):
+            projects.append(item)
+            
+    return sorted(projects, key=lambda p: os.path.getmtime(os.path.join(config.OUTPUT_ROOT_DIR, p)), reverse=True)
+
 # --- TEMPLATE HTML ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -44,10 +59,13 @@ HTML_TEMPLATE = """
         .container { max-width: 900px; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
         h1, h2 { color: #444; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         #logs { height: 50vh; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; background-color: #fafafa; border-radius: 5px; line-height: 1.6; white-space: pre-wrap; font-family: "SF Mono", "Fira Code", "Roboto Mono", monospace; font-size: 14px; margin-top: 15px; }
-        textarea { width: 98%; padding: 10px; border-radius: 5px; border: 1px solid #ccc; font-size: 15px; min-height: 120px; }
+        input[type="text"], textarea, select { width: 98%; padding: 10px; border-radius: 5px; border: 1px solid #ccc; font-size: 15px; margin-top: 5px; }
+        textarea { min-height: 120px; }
         button { background-color: #007bff; color: white; padding: 12px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; margin-top: 10px; }
         button:disabled { background-color: #aaa; cursor: not-allowed; }
         #status { margin-top: 15px; font-weight: bold; }
+        .form-group { margin-bottom: 15px; }
+        .form-group p { font-size: 14px; color: #666; margin-top: 5px; }
     </style>
     <script>
         async function fetchLogs() {
@@ -59,12 +77,29 @@ HTML_TEMPLATE = """
                 const runButton = document.getElementById('runButton');
                 const taskText = document.getElementById('taskText');
                 const fileInput = document.getElementById('fileInput');
+                const projectSelector = document.getElementById('projectSelector');
+                const projectNameInput = document.getElementById('projectName');
 
                 statusDiv.textContent = data.is_running ? 'Status: Missão em andamento...' : 'Status: Aguardando nova missão.';
                 runButton.disabled = data.is_running;
                 taskText.disabled = data.is_running;
                 fileInput.disabled = data.is_running;
+                projectSelector.disabled = data.is_running;
+                projectNameInput.disabled = data.is_running || projectSelector.value !== "";
 
+
+                if (!data.is_running) {
+                    const currentSelected = projectSelector.value;
+                    projectSelector.innerHTML = '<option value="">Criar novo projeto</option>';
+                    data.projects.forEach(project => {
+                        const option = document.createElement('option');
+                        option.value = project;
+                        option.textContent = project;
+                        projectSelector.appendChild(option);
+                    });
+                    projectSelector.value = currentSelected;
+                }
+                
                 const logDiv = document.getElementById('logs');
                 const shouldScroll = logDiv.scrollTop + logDiv.clientHeight >= logDiv.scrollHeight - 10;
                 logDiv.innerHTML = data.logs.map(log => `<div class="log-line">${escapeHtml(log)}</div>`).join('');
@@ -79,6 +114,13 @@ HTML_TEMPLATE = """
         async function startTask() {
             const taskDescription = document.getElementById('taskText').value;
             const files = document.getElementById('fileInput').files;
+            const selectedProject = document.getElementById('projectSelector').value;
+            const projectName = document.getElementById('projectName').value;
+
+            if (selectedProject === "" && !projectName.trim()) {
+                alert('Por favor, defina um nome para o novo projeto.');
+                return;
+            }
 
             if (!taskDescription.trim()) {
                 alert('Por favor, defina uma tarefa.');
@@ -87,6 +129,9 @@ HTML_TEMPLATE = """
             
             const formData = new FormData();
             formData.append('tarefa', taskDescription);
+            formData.append('projeto_selecionado', selectedProject);
+            formData.append('nome_projeto', projectName); // Envia o nome do projeto
+
             for (let i = 0; i < files.length; i++) {
                 formData.append('files', files[i]);
             }
@@ -113,7 +158,17 @@ HTML_TEMPLATE = """
         }
 
         window.onload = () => {
+            fetchLogs();
             setInterval(fetchLogs, 2000);
+
+            document.getElementById('projectSelector').addEventListener('change', function() {
+                const projectNameInput = document.getElementById('projectName');
+                projectNameInput.disabled = this.value !== "";
+                if (this.value !== "") {
+                    projectNameInput.value = ""; // Limpa o campo se um projeto existente for selecionado
+                }
+            });
+
             document.getElementById('taskForm').addEventListener('submit', function(e) {
                 e.preventDefault();
                 startTask();
@@ -125,10 +180,27 @@ HTML_TEMPLATE = """
     <div class="container">
         <h1>Painel de Controle da Missão</h1>
         <form id="taskForm">
-            <h2>Defina a Tarefa</h2>
-            <textarea id="taskText" placeholder="Descreva aqui a tarefa complexa..."></textarea>
-            <h2>Anexar Arquivos (Opcional)</h2>
-            <input type="file" id="fileInput" multiple>
+            <div class="form-group">
+                <h2>1. Selecione o Projeto</h2>
+                <select id="projectSelector">
+                    <option value="">Criar novo projeto</option>
+                </select>
+                <p>Escolha um projeto existente para continuar trabalhando nele.</p>
+            </div>
+            <div class="form-group">
+                <h2>2. Defina o Nome do Projeto</h2>
+                <input type="text" id="projectName" placeholder="Ex: Sistema de E-commerce">
+                <p>Este campo é obrigatório apenas ao criar um novo projeto.</p>
+            </div>
+            <div class="form-group">
+                <h2>3. Defina a Tarefa</h2>
+                <textarea id="taskText" placeholder="Descreva aqui a tarefa complexa..."></textarea>
+                <p>Se um projeto foi selecionado, esta tarefa será executada sobre ele.</p>
+            </div>
+            <div class="form-group">
+                <h2>4. Anexar Arquivos (Opcional)</h2>
+                <input type="file" id="fileInput" multiple>
+            </div>
             <button id="runButton">Iniciar Missão</button>
         </form>
         <div id="status">Status: Aguardando conexão...</div>
@@ -148,22 +220,32 @@ def index():
 
 @app.route('/status')
 def get_status():
-    """Rota da API que fornece os logs e o status atual da tarefa."""
-    return jsonify({"logs": app_logs, "is_running": is_task_running})
+    """Rota da API que fornece os logs, o status da tarefa e a lista de projetos."""
+    projects = get_existing_projects()
+    return jsonify({
+        "logs": app_logs, 
+        "is_running": is_task_running,
+        "projects": projects
+    })
 
 @app.route('/start', methods=['POST'])
 def start_task_endpoint():
-    """Rota para iniciar uma nova tarefa. Recebe a descrição da tarefa via JSON."""
+    """Rota para iniciar uma nova tarefa."""
     global is_task_running
     with task_lock:
         if is_task_running:
             return jsonify({"success": False, "message": "Uma tarefa já está em andamento."}), 400
 
         tarefa = request.form.get('tarefa')
+        projeto_selecionado = request.form.get('projeto_selecionado')
+        nome_projeto = request.form.get('nome_projeto')
+
         if not tarefa:
             return jsonify({"success": False, "message": "A descrição da tarefa não pode ser vazia."}), 400
+        
+        if not projeto_selecionado and not nome_projeto:
+            return jsonify({"success": False, "message": "O nome do projeto é obrigatório para novos projetos."}), 400
 
-        # --- Lógica de Processamento de Arquivos ---
         uploaded_files_content = {}
         if 'files' in request.files:
             files = request.files.getlist('files')
@@ -175,7 +257,7 @@ def start_task_endpoint():
                         if filename.endswith(('.xlsx', '.xls')):
                             df = pd.read_excel(file)
                             content = df.to_string()
-                        else: # Para .txt, .py, .html, etc.
+                        else:
                             content = file.read().decode('utf-8')
                         
                         uploaded_files_content[filename] = content
@@ -183,27 +265,27 @@ def start_task_endpoint():
                     except Exception as e:
                         logger.add_log_for_ui(f"Erro ao processar o arquivo '{filename}': {e}", "error")
 
-        # Inicia a tarefa da CrewAI em uma thread
-        thread = Thread(target=run_crewai_task_in_background, args=(app.task_manager, tarefa, uploaded_files_content))
+        thread = Thread(target=run_crewai_task_in_background, args=(app.task_manager, tarefa, uploaded_files_content, projeto_selecionado, nome_projeto))
         thread.daemon = True
         thread.start()
         is_task_running = True
     
     return jsonify({"success": True, "message": "Tarefa iniciada."})
 
-def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str, uploaded_content: dict):
+def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str, uploaded_content: dict, projeto_selecionado: str, nome_projeto: str):
     """Função que executa a tarefa da CrewAI em segundo plano."""
     global is_task_running
     
-    # Limpa os logs antigos e inicia a nova missão
     app_logs.clear()
     ui_callback("=> Missão Iniciada. O TaskManager está assumindo o controle.")
     
     try:
         resultado_final = task_manager.delegate_task(
                             main_task_description=tarefa,
+                            project_name=nome_projeto,
                             status_callback=ui_callback,
-                            uploaded_files_content=uploaded_content
+                            uploaded_files_content=uploaded_content,
+                            existing_project_dir=projeto_selecionado or None
                             )
         ui_callback(f"========= EXECUÇÃO FINALIZADA =========")
         for line in resultado_final.split('\n'):
@@ -212,7 +294,6 @@ def run_crewai_task_in_background(task_manager: TaskManager, tarefa: str, upload
         ui_callback(f"Erro crítico na tarefa: {e}")
         logging.critical(f"Erro crítico não tratado na thread da tarefa: {e}", exc_info=True)
     finally:
-        # Garante que o status seja atualizado mesmo se ocorrer um erro
         with task_lock:
             is_task_running = False
 
@@ -238,7 +319,6 @@ def main():
         fallback_model_name=config.FALLBACK_MODEL_NAME
     )
 
-    # Anexa o task_manager à instância do app Flask para que possa ser acessado na rota /start
     app.task_manager = TaskManager(
         llm_service=gemini_service, 
         output_dir=config.OUTPUT_ROOT_DIR
