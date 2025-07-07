@@ -5,7 +5,6 @@ import json
 import uuid
 import logging
 from typing import List, Dict, Any, Optional, Callable
-
 from fpdf import FPDF
 
 from config import config

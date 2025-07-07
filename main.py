@@ -7,7 +7,6 @@ from threading import Thread, Lock
 import time
 import pandas as pd
 from werkzeug.utils import secure_filename
-import shutil
 
 from app_logger import logger
 from config import config, setup_logging

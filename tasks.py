@@ -271,6 +271,8 @@ class TaskManager:
                 "<contexto_da_tarefa>\n"
                 f"  - **TIPO DE TAREFA:** CRIAÇÃO DE NOVO PROJETO.\n"
                 f"  - **TAREFA ORIGINAL DO USUÁRIO:** \"{main_task_description}\"\n"
+                f"  - **CONTEXTUALIZAÇÃO:** Esta tarefa é para criar um novo projeto do zero, sem arquivos existentes.\n"
+                f"  - Sua reescrita deve focar em como iniciar o projeto e quais arquivos devem ser criados, gerando a arquitetura do projeto.\n"
                 "</contexto_da_tarefa>\n\n"
             )
 
@@ -1133,7 +1135,6 @@ class TaskManager:
             new_plan = self._re_strategize_plan(enhanced_task_description, feedback_history)
             if new_plan:
                 master_plan = new_plan
-                # A nova crew é criada com o mesmo shared_context da crew antiga para não perder o estado dos arquivos
                 crew, _ = self._setup_crew(master_plan, task_id, crew.shared_context)
                 logger.add_log_for_ui("PLANO MESTRE REVISADO E CREW RECONFIGURADA.", "warning")
                 failures_on_same_issue_counter = 0

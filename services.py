@@ -10,7 +10,6 @@ import random
 
 from config import config
 from app_logger import logger
-# Importa a sua nova função de busca diretamente
 from search_util import search_startpage
 
 class GeminiService:
