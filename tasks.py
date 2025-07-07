@@ -344,7 +344,7 @@ class TaskManager:
         return [{"description": debug_task_description, "responsible_role": responsible_agent}]
 
     def _generate_corrective_subtasks(self, main_task_description: str, original_plan: Dict, feedback: str) -> Optional[List[Dict]]:
-        """Usa o LLM para gerar APENAS a lista de subtarefas necessárias para corrigir um erro."""
+        """Usa o LLM para gerar um plano de correção CONSOLIDADO e ESTRATÉGICO."""
         logger.add_log_for_ui("Gerando uma lista de subtarefas corretivas focada no erro...")
         original_subtasks_str = json.dumps(original_plan.get('subtasks', []), indent=2)
         agent_roles = [ag['role'] for ag in original_plan.get('agents', [])]
@@ -354,14 +354,16 @@ class TaskManager:
             "<contexto>\n"
             f"  - OBJETIVO GERAL DO PROJETO: {main_task_description}\n"
             f"  - AGENTES DISPONÍVEIS NA EQUIPE: {agent_roles}\n"
-            f"  - FEEDBACK DA FALHA ANTERIOR: {feedback}\n"
+            f"  - PLANO ORIGINAL (para referência): \n{original_subtasks_str}\n"
+            f"  - FEEDBACK DETALHADO DA FALHA ANTERIOR (contém os arquivos problemáticos): {feedback}\n"
             "</contexto>\n\n"
             "<tarefa>\n"
             "  Sua missão é criar uma **lista de subtarefas NOVA, CURTA e ESTRATÉGICA** que resolva a causa raiz do erro reportado.\n"
             "  **Passos Mentais a Seguir:**\n"
-            "  1.  **Análise do Erro:** Entenda o problema principal descrito no 'FEEDBACK'. (Ex: 'código incompleto', 'falha de integração', 'erro de execução').\n"
-            "  2.  **Consolidação:** Em vez de criar uma tarefa para cada pequeno detalhe, **AGRUPE correções relacionadas** em subtarefas abrangentes. O objetivo é a eficiência.\n"
-            "  3.  **Criação do Plano de Ação:** Elabore uma sequência de 1 a 3 subtarefas que resolva o problema de forma definitiva.\n"
+            "  1.  **Análise do Erro:** Analise o 'FEEDBACK DETALHADO' para identificar os arquivos específicos que falharam e o motivo da falha.\n"
+            "  2.  **Foco nos Arquivos Problemáticos:** Seu plano de correção deve se concentrar **exclusivamente** nos arquivos mencionados no feedback.\n"
+            "  3.  **Consolidação:** Agrupe correções relacionadas para o mesmo arquivo em uma única subtarefa abrangente. O objetivo é a eficiência.\n"
+            "  4.  **Criação do Plano de Ação:** Elabore uma sequência de subtarefas que resolva os problemas apontados de forma definitiva.\n"
             "</tarefa>\n\n"
             "<regras_de_saida>\n"
             "  - Sua resposta deve ser **APENAS uma lista JSON** de objetos de subtarefa.\n"
@@ -369,11 +371,11 @@ class TaskManager:
             "  - Exemplo para um feedback sobre 'placeholders de integração em game.js':\n"
             "    [\n"
             "      {\n"
-            '        "description": "Revisar o feedback sobre placeholders e refatorar o arquivo `js/game.js` para integrar completamente todos os módulos necessários (map, inventory, ui, etc.), removendo todos os comentários de lógica incompleta e ativando as funcionalidades.",\n'
+            '        "description": "Com base no feedback, refatore o arquivo `js/game.js` para integrar completamente todos os módulos necessários (map, inventory, ui, etc.), removendo todos os comentários de lógica incompleta e ativando as funcionalidades.",\n'
             '        "responsible_role": "Desenvolvedor de Jogo Web"\n'
             "      },\n"
             "      {\n"
-            '        "description": "Após a refatoração do `game.js`, revisar o arquivo `js/modules/events.js` e implementar a lógica real para os efeitos dos eventos, garantindo que eles modifiquem o estado do jogo corretamente.",\n'
+            '        "description": "Após a refatoração do `game.js`, revise o arquivo `js/modules/events.js` e implemente a lógica real para os efeitos dos eventos, garantindo que eles modifiquem o estado do jogo corretamente.",\n'
             '        "responsible_role": "Desenvolvedor de Jogo Web"\n'
             "      }\n"
             "    ]\n"
