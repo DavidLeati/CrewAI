@@ -40,7 +40,6 @@ def get_existing_projects():
     
     projects = []
     for item in os.listdir(config.OUTPUT_ROOT_DIR):
-        # A nova lógica agora lista QUALQUER diretório dentro da pasta de resultados.
         if os.path.isdir(os.path.join(config.OUTPUT_ROOT_DIR, item)):
             projects.append(item)
             
@@ -183,7 +182,6 @@ HTML_TEMPLATE = """
         }
     </style>
     <script>
-        // O JavaScript permanece o mesmo, pois a lógica não mudou.
         async function fetchLogs() {
             try {
                 const response = await fetch('/status');
@@ -288,7 +286,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>🎮 CrewAI - Painel de Controle da Missão</h1>
+        <h1>CoreAI - Painel de Controle da Missão</h1>
         <form id="taskForm">
             <div class="form-group">
                 <h2>1. Selecione o Projeto</h2>
@@ -308,10 +306,10 @@ HTML_TEMPLATE = """
                 <h2>4. Anexar Arquivos (Opcional)</h2>
                 <input type="file" id="fileInput" multiple>
             </div>
-            <button id="runButton">🚀 Iniciar Missão</button>
+            <button id="runButton">Iniciar Missão</button>
         </form>
         <div id="status">Aguardando conexão...</div>
-        <h2>🛰️ Logs da Missão</h2>
+        <h2>Logs da Missão</h2>
         <div id="logs"><div class="log-line">Aguardando conexão com a base...</div></div>
     </div>
 </body>
