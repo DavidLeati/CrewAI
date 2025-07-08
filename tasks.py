@@ -14,12 +14,14 @@ from services import GeminiService
 from agents import Agent, Crew
 from app_logger import logger
 from shared_context import SharedContext
+from code_validator import CodeValidator, SymbolVisitor
 
 class TaskManager:
     """Orquestra o planejamento, execução de tarefas por crews e o ciclo de validação/iteração."""
     def __init__(self, llm_service: GeminiService, output_dir: str):
         self.llm_service = llm_service
         self.output_dir = output_dir
+        self.code_validator_instance = CodeValidator()
         os.makedirs(self.output_dir, exist_ok=True)
 
     def _sanitize_project_name(self, name: str) -> str:
@@ -1010,91 +1012,22 @@ class TaskManager:
         logger.add_log_for_ui(f"Tarefa finalizada como FALHA após {config.MAX_ITERATIONS} tentativas.", "critical")
         return False, execution_results, feedback_history
 
-    def _map_dependencies(self, workspace_dir: str) -> Dict[str, Dict]:
-        """
-        Mapeia todas as definições e dependências de símbolos em arquivos Python
-        usando a árvore de sintaxe abstrata (AST).
-        """
-        dependencies = {}
-        py_files = [os.path.join(r, f) for r, d, fs in os.walk(workspace_dir) for f in fs if f.endswith('.py')]
-
-        for file_path in py_files:
-            relative_path = os.path.relpath(file_path, workspace_dir)
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    tree = ast.parse(f.read())
-                    for node in ast.walk(tree):
-                        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
-                            symbol_name = node.name
-                            if symbol_name not in dependencies:
-                                dependencies[symbol_name] = {'defined_in': relative_path, 'depends_on': set()}
-                            for sub_node in ast.walk(node):
-                                if isinstance(sub_node, ast.Name) and isinstance(sub_node.ctx, ast.Load):
-                                    dependencies[symbol_name]['depends_on'].add(sub_node.id)
-                        elif isinstance(node, ast.Assign):
-                            for target in node.targets:
-                                if isinstance(target, ast.Name):
-                                    var_name = target.id
-                                    if var_name not in dependencies:
-                                        dependencies[var_name] = {'defined_in': relative_path, 'depends_on': set()}
-                                    if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
-                                        dependencies[var_name]['depends_on'].add(node.value.func.id)
-            except Exception as e:
-                logger.add_log_for_ui(f"Erro ao mapear dependências em '{relative_path}': {e}", "warning")
-        
-        return dependencies
-
-    def _detect_cycles(self, dependencies: Dict[str, Dict]) -> Optional[str]:
-        """
-        Detecta ciclos em um grafo de dependências usando busca em profundidade.
-        Retorna uma string de feedback se um ciclo for encontrado, senão None.
-        """
-        for start_node, data in dependencies.items():
-            path = [start_node]
-            q = list(data['depends_on'])
-            
-            visited_in_path = {start_node}
-            
-            while q:
-                current_node = q.pop(0)
-                
-                if current_node in visited_in_path:
-                    path.append(current_node)
-                    cycle_str = " -> ".join(path)
-                    feedback = (f"FALHA DE LÓGICA: Detectada uma dependência circular/recursiva: {cycle_str}. "
-                                f"Isso provavelmente causará um loop infinito. O problema origina-se em '{data['defined_in']}'. "
-                                "A próxima iteração deve focar em quebrar este ciclo.")
-                    logging.error(feedback)
-                    return feedback
-                
-                visited_in_path.add(current_node)
-                path.append(current_node)
-                
-                if current_node in dependencies:
-                    q.extend(dependencies[current_node]['depends_on'])
-                
-                # Para evitar loops infinitos na própria análise, limitamos a profundidade da busca
-                if len(path) > len(dependencies) * 2: break
-                
-                # Backtrack
-                path.pop()
-                visited_in_path.remove(current_node)
-
-        return None
-
     def _validate_code_logic_patterns(self, workspace_dir: str) -> Dict[str, Any]:
-        """
-        Orquestra a análise de código: mapeia dependências e depois detecta ciclos.
-        """
-        logger.add_log_for_ui("--- Iniciando Análise de Lógica de Código (Programática) ---")
-        
-        dependencies = self._map_dependencies(workspace_dir)
-        cycle_feedback = self._detect_cycles(dependencies)
-        
+        """Orquestra a análise de código: mapeia dependências, detecta ciclos e encontra variáveis órfãs."""
+        # Detectar ciclos
+        dependencies = self.code_validator_instance._map_dependencies(workspace_dir)
+        cycle_feedback = self.code_validator_instance._detect_cycles(dependencies)
         if cycle_feedback:
+            logging.error(cycle_feedback)
             return {"success": False, "feedback": cycle_feedback}
+
+        # Encontrar variáveis órfãs
+        orphan_feedback = self.code_validator_instance._find_orphans(workspace_dir)
+        if orphan_feedback:
+            full_feedback = "\n".join(orphan_feedback)
+            logging.error(full_feedback)
+            return {"success": False, "feedback": full_feedback}
             
-        logger.add_log_for_ui("Análise de Lógica de Código (Programática) bem-sucedida.")
         return {"success": True}
     
     def _run_validation_pipeline(self, workspace_dir: str, original_subtasks: List[Dict]) -> Tuple[bool, str]:
